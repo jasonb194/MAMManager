@@ -1,4 +1,4 @@
-"""MAM Manager sensor: user info and donated-today status."""
+"""MAM Manager sensors: user info, stats, and donated-today status."""
 
 from __future__ import annotations
 
@@ -15,9 +15,17 @@ from .const import (
     CONF_AUTO_BUY_CREDIT,
     CONF_AUTO_BUY_VIP,
     CONF_AUTO_DONATE_VAULT,
+    CONF_USER_ID,
     DOMAIN,
-    STORAGE_LAST_DONATE_DATE,
 )
+
+
+def _device_info(entry: ConfigEntry) -> dict:
+    return {
+        "identifiers": {(DOMAIN, entry.entry_id)},
+        "name": "MAM Manager",
+        "manufacturer": "MyAnonamouse",
+    }
 
 
 async def async_setup_entry(
@@ -25,31 +33,43 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up MAM Manager sensor."""
+    """Set up MAM Manager sensors."""
     data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if not data:
         return
     coordinator = data.get("coordinator")
     if not coordinator:
         return
-    async_add_entities([MAMManagerSensor(entry, coordinator)])
+
+    entities: list[SensorEntity] = [
+        MAMManagerStatusSensor(entry, coordinator),
+        MAMManagerUserIDSensor(entry),
+        MAMManagerStatSensor(entry, coordinator, "classname", "Class", "classname"),
+        MAMManagerStatSensor(entry, coordinator, "uploaded", "Uploaded", "uploaded"),
+        MAMManagerStatSensor(entry, coordinator, "downloaded", "Downloaded", "downloaded"),
+        MAMManagerStatSensor(entry, coordinator, "ratio", "Ratio", "ratio"),
+        MAMManagerStatSensor(entry, coordinator, "seedbonus", "Seedbonus", "seedbonus"),
+        MAMManagerStatSensor(entry, coordinator, "wedges", "Wedges", "wedges"),
+        MAMManagerDonatedTodaySensor(entry, coordinator),
+        MAMManagerVIPEligibleSensor(entry, coordinator),
+        MAMManagerLastRunSensor(entry, coordinator, "last_buy_credit_date", "Last buy credit date", "last_buy_credit"),
+        MAMManagerLastRunSensor(entry, coordinator, "last_donate_date", "Last donate date", "last_donate"),
+        MAMManagerLastRunSensor(entry, coordinator, "last_buy_vip_date", "Last buy VIP date", "last_buy_vip"),
+    ]
+    async_add_entities(entities)
 
 
-class MAMManagerSensor(CoordinatorEntity, SensorEntity):
-    """Sensor exposing MAM user data and donated-today status."""
+class MAMManagerStatusSensor(CoordinatorEntity, SensorEntity):
+    """Main status sensor: username as value, full attributes for dashboard."""
 
     _attr_has_entity_name = True
-    _attr_name = "MAM status"
+    _attr_name = "Username"
 
     def __init__(self, entry: ConfigEntry, coordinator) -> None:
         super().__init__(coordinator)
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_mam_status"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-            "name": "MAM Manager",
-            "manufacturer": "MyAnonamouse",
-        }
+        self._attr_device_info = _device_info(entry)
 
     @property
     def coordinator_data(self) -> dict:
@@ -57,7 +77,6 @@ class MAMManagerSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self) -> str:
-        """Primary value: username or 'Unknown'."""
         user = self.coordinator_data.get("user_data") or {}
         return (user.get("username") or "Unknown").strip()
 
@@ -71,30 +90,153 @@ class MAMManagerSensor(CoordinatorEntity, SensorEntity):
         options = self._entry.options or self._entry.data or {}
         notifs = user.get("notifs") or {}
         return {
-            "classname": user.get("classname"),
             "country_code": user.get("country_code"),
             "country_name": user.get("country_name"),
-            "downloaded": user.get("downloaded"),
             "downloaded_bytes": user.get("downloaded_bytes"),
-            "ratio": user.get("ratio"),
-            "seedbonus": user.get("seedbonus"),
-            "uid": user.get("uid"),
-            "uploaded": user.get("uploaded"),
             "uploaded_bytes": user.get("uploaded_bytes"),
-            "username": user.get("username"),
-            "wedges": user.get("wedges"),
+            "uid": user.get("uid"),
             "notifs_pms": notifs.get("pms"),
             "notifs_about_to_drop_client": notifs.get("aboutToDropClient"),
             "notifs_tickets": notifs.get("tickets"),
             "notifs_waiting_tickets": notifs.get("waiting_tickets"),
             "notifs_requests": notifs.get("requests"),
             "notifs_topics": notifs.get("topics"),
-            "donated_today": last_donate == today,
             "last_donate_date": last_donate,
             "last_buy_credit_date": last_buy,
             "last_buy_vip_date": last_buy_vip,
-            "auto_buy_credit": options.get(CONF_AUTO_BUY_CREDIT, False),
-            "auto_donate_vault": options.get(CONF_AUTO_DONATE_VAULT, False),
-            "auto_buy_vip": options.get(CONF_AUTO_BUY_VIP, False),
             "auto_buy_vip_eligible": (user.get("classname") or "").strip().lower() in ALLOWED_CLASSNAMES_FOR_AUTO_VIP,
         }
+
+
+class MAMManagerUserIDSensor(SensorEntity):
+    """User ID from config (always available)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "User ID"
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_user_id"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def native_value(self) -> str:
+        return str((self._entry.data or {}).get(CONF_USER_ID, ""))
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        return None
+
+
+class MAMManagerStatSensor(CoordinatorEntity, SensorEntity):
+    """Single stat from user_data (class, uploaded, downloaded, ratio, seedbonus, wedges)."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        coordinator,
+        key: str,
+        name: str,
+        unique_suffix: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._key = key
+        self._attr_name = name
+        self._attr_unique_id = f"{entry.entry_id}_{unique_suffix}"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def coordinator_data(self) -> dict:
+        return self.coordinator.data or {}
+
+    @property
+    def native_value(self) -> str | int | float | None:
+        user = self.coordinator_data.get("user_data") or {}
+        val = user.get(self._key)
+        if val is None:
+            return None
+        if isinstance(val, (int, float)):
+            return val
+        return str(val)
+
+
+class MAMManagerDonatedTodaySensor(CoordinatorEntity, SensorEntity):
+    """Whether user has donated today."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Donated today"
+
+    def __init__(self, entry: ConfigEntry, coordinator) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_donated_today"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def coordinator_data(self) -> dict:
+        return self.coordinator.data or {}
+
+    @property
+    def native_value(self) -> str:
+        last_donate = self.coordinator_data.get("last_donate_date")
+        today = date.today().isoformat()
+        return "Yes" if last_donate == today else "No"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"last_donate_date": self.coordinator_data.get("last_donate_date")}
+
+
+class MAMManagerVIPEligibleSensor(CoordinatorEntity, SensorEntity):
+    """Whether user class allows auto buy VIP (VIP or Power user)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Auto buy VIP eligible"
+
+    def __init__(self, entry: ConfigEntry, coordinator) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_vip_eligible"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def coordinator_data(self) -> dict:
+        return self.coordinator.data or {}
+
+    @property
+    def native_value(self) -> str:
+        user = self.coordinator_data.get("user_data") or {}
+        classname = ((user.get("classname") or "").strip()).lower()
+        return "Yes" if classname in ALLOWED_CLASSNAMES_FOR_AUTO_VIP else "No"
+
+
+class MAMManagerLastRunSensor(CoordinatorEntity, SensorEntity):
+    """Last run date for an automation (buy credit, donate, buy VIP)."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        coordinator,
+        key: str,
+        name: str,
+        unique_suffix: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._key = key
+        self._attr_name = name
+        self._attr_unique_id = f"{entry.entry_id}_{unique_suffix}"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def coordinator_data(self) -> dict:
+        return self.coordinator.data or {}
+
+    @property
+    def native_value(self) -> str | None:
+        return self.coordinator_data.get(self._key)

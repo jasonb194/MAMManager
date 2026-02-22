@@ -276,7 +276,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Run once on load in case we're past midnight and haven't run yet
     hass.async_create_task(_run_daily_actions())
 
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "switch"])
 
     try:
         from .dashboard import ensure_dashboard
@@ -290,4 +290,4 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload config entry."""
     hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-    return await hass.config_entries.async_unload_platforms(entry, ["sensor"])
+    return await hass.config_entries.async_unload_platforms(entry, ["sensor", "switch"])
