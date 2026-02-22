@@ -91,6 +91,8 @@ async def ensure_dashboard(hass: HomeAssistant, entry_id: str | None = None) -> 
                 entity_ids["status"] = reg_entry.entity_id
             elif uid.endswith("_user_id"):
                 entity_ids["user_id"] = reg_entry.entity_id
+            elif uid.endswith("_mam_id_preview"):
+                entity_ids["mam_id_preview"] = reg_entry.entity_id
             elif uid.endswith("_classname"):
                 entity_ids["classname"] = reg_entry.entity_id
             elif uid.endswith("_uploaded"):
@@ -132,7 +134,7 @@ async def ensure_dashboard(hass: HomeAssistant, entry_id: str | None = None) -> 
     ]
 
     if entity_ids:
-        user_order = ("status", "user_id", "donated_today", "classname", "uploaded", "downloaded", "ratio", "seedbonus", "wedges")
+        user_order = ("status", "user_id", "mam_id_preview", "donated_today", "classname", "uploaded", "downloaded", "ratio", "seedbonus", "wedges")
         user_entities = [entity_ids[k] for k in user_order if k in entity_ids]
         if user_entities:
             cards.append({"type": "entities", "title": "User & stats", "entities": [{"entity": e} for e in user_entities]})

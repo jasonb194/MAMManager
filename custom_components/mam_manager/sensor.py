@@ -15,6 +15,7 @@ from .const import (
     CONF_AUTO_BUY_CREDIT,
     CONF_AUTO_BUY_VIP,
     CONF_AUTO_DONATE_VAULT,
+    CONF_MAM_ID,
     CONF_USER_ID,
     DOMAIN,
 )
@@ -44,6 +45,7 @@ async def async_setup_entry(
     entities: list[SensorEntity] = [
         MAMManagerStatusSensor(entry, coordinator),
         MAMManagerUserIDSensor(entry),
+        MAMManagerMamIdPreviewSensor(entry, coordinator),
         MAMManagerStatSensor(entry, coordinator, "classname", "Class", "classname"),
         MAMManagerStatSensor(entry, coordinator, "uploaded", "Uploaded", "uploaded"),
         MAMManagerStatSensor(entry, coordinator, "downloaded", "Downloaded", "downloaded"),
@@ -126,6 +128,26 @@ class MAMManagerUserIDSensor(SensorEntity):
     @property
     def native_unit_of_measurement(self) -> str | None:
         return None
+
+
+class MAMManagerMamIdPreviewSensor(CoordinatorEntity, SensorEntity):
+    """First 10 characters of mam_id (session cookie) for identification only."""
+
+    _attr_has_entity_name = True
+    _attr_name = "MAM ID (first 10 chars)"
+
+    def __init__(self, entry: ConfigEntry, coordinator) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_mam_id_preview"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def native_value(self) -> str:
+        mam_id = (self._entry.data or {}).get(CONF_MAM_ID) or ""
+        if not mam_id:
+            return "Not set"
+        return mam_id[:10]
 
 
 class MAMManagerStatSensor(CoordinatorEntity, SensorEntity):
