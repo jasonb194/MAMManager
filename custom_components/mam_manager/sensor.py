@@ -12,9 +12,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     ALLOWED_CLASSNAMES_FOR_AUTO_VIP,
-    CONF_AUTO_BUY_CREDIT,
-    CONF_AUTO_BUY_VIP,
-    CONF_AUTO_DONATE_VAULT,
     CONF_MAM_ID,
     CONF_USER_ID,
     DOMAIN,
@@ -124,10 +121,6 @@ class MAMManagerUserIDSensor(SensorEntity):
     @property
     def native_value(self) -> str:
         return str((self._entry.data or {}).get(CONF_USER_ID, ""))
-
-    @property
-    def native_unit_of_measurement(self) -> str | None:
-        return None
 
 
 class MAMManagerMamIdPreviewSensor(CoordinatorEntity, SensorEntity):

@@ -34,6 +34,8 @@ ALLOWED_CLASSNAMES_FOR_AUTO_VIP = ("vip", "power user")
 # Minimum seedbonus (bonus points) required to run each action
 MIN_SEEDBONUS_FOR_VIP = 5000
 MIN_SEEDBONUS_FOR_CREDIT = 25000
+# MAM requires ratio >= this to donate to vault
+MIN_RATIO_FOR_DONATE = 1.05
 
 STORAGE_KEY = "mam_manager_data"
 STORAGE_VERSION = 1

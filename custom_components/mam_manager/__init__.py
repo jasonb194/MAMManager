@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import date
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -25,6 +25,7 @@ from .const import (
     DEFAULT_BUY_VIP_PATH,
     DEFAULT_DONATE_VAULT_PATH,
     DOMAIN,
+    MIN_RATIO_FOR_DONATE,
     MIN_SEEDBONUS_FOR_CREDIT,
     MIN_SEEDBONUS_FOR_VIP,
     STORAGE_KEY,
@@ -188,15 +189,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Order: 1) donate to vault, 2) buy VIP, 3) buy credit (refresh user data between each)
         if options.get(CONF_AUTO_DONATE_VAULT) and DEFAULT_DONATE_VAULT_PATH:
             if saved.get(STORAGE_LAST_DONATE_DATE) != today:
-                ok, new_cookie = await _mam_request(
-                    hass, base_url, DEFAULT_DONATE_VAULT_PATH, mam_id
-                )
-                if new_cookie:
-                    hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_MAM_ID: new_cookie})
-                if ok:
-                    saved[STORAGE_LAST_DONATE_DATE] = today
-                    updated = True
-                    _LOGGER.info("MAM Manager: auto donate to vault completed for today")
+                user_data = (coordinator.data or {}).get("user_data") or {}
+                ratio_val = user_data.get("ratio")
+                if isinstance(ratio_val, str):
+                    try:
+                        ratio_val = float(ratio_val.replace(",", ""))
+                    except (ValueError, TypeError):
+                        ratio_val = 0.0
+                ratio_val = float(ratio_val) if ratio_val is not None else 0.0
+                if ratio_val >= MIN_RATIO_FOR_DONATE:
+                    ok, new_cookie = await _mam_request(
+                        hass, base_url, DEFAULT_DONATE_VAULT_PATH, mam_id
+                    )
+                    if new_cookie:
+                        hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_MAM_ID: new_cookie})
+                    if ok:
+                        saved[STORAGE_LAST_DONATE_DATE] = today
+                        updated = True
+                        _LOGGER.info("MAM Manager: auto donate to vault completed for today")
+                else:
+                    _LOGGER.debug(
+                        "MAM Manager: auto donate to vault skipped (ratio %s < %s)",
+                        ratio_val,
+                        MIN_RATIO_FOR_DONATE,
+                    )
         await coordinator.async_request_refresh()
         mam_id = (entry.data or {}).get(CONF_MAM_ID) or mam_id
 
