@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "MAM Manager",
+        "description": "Connect to MyAnonamouse. Enter your user ID and session cookie.",
+        "data": {
+          "user_id": "User ID",
+          "mam_id": "MAM session cookie (mam_id value)"
+        },
+        "data_description": {
+          "user_id": "Your MAM user ID (numeric)",
+          "mam_id": "Cookie value from your browser after logging in"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to MAM. Check user ID and cookie.",
+      "invalid_user_id": "User ID must be a number."
+    },
+    "abort": {}
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "MAM Manager options",
+        "description": "Enable or disable daily automations.",
+        "data": {
+          "auto_buy_credit": "Auto buy credit (once per day)",
+          "auto_donate_vault": "Auto donate to vault (once per day)",
+          "auto_buy_vip": "Auto buy VIP (once per day)"
+        }
+      }
+    }
+  }
+}

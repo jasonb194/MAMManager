@@ -1,0 +1,13 @@
+{
+  "domain": "mam_manager",
+  "name": "MAM Manager",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["lovelace"],
+  "documentation": "https://github.com/yourusername/MAMManager",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/yourusername/MAMManager/issues",
+  "requirements": ["aiohttp>=3.8.0"],
+  "version": "1.0.0"
+}
