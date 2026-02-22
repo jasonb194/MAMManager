@@ -136,7 +136,16 @@ async def ensure_dashboard(hass: HomeAssistant, entry_id: str | None = None) -> 
         user_entities = [entity_ids[k] for k in user_order if k in entity_ids]
         if user_entities:
             cards.append({"type": "entities", "title": "User & stats", "entities": [{"entity": e} for e in user_entities]})
-        auto_order = ("switch_credit", "switch_vault", "switch_vip", "vip_eligible", "last_buy_credit", "last_donate", "last_buy_vip")
+        # Only show Auto buy VIP toggle when user is eligible (VIP or Power user)
+        vip_eligible_entity = entity_ids.get("vip_eligible")
+        show_vip_switch = True
+        if vip_eligible_entity:
+            state = hass.states.get(vip_eligible_entity)
+            show_vip_switch = state is not None and state.state == "Yes"
+        auto_order = ["switch_credit", "switch_vault"]
+        if show_vip_switch and "switch_vip" in entity_ids:
+            auto_order.append("switch_vip")
+        auto_order.extend(["vip_eligible", "last_buy_credit", "last_donate", "last_buy_vip"])
         automation_entities = [entity_ids[k] for k in auto_order if k in entity_ids]
         if automation_entities:
             cards.append({"type": "entities", "title": "Daily automations", "entities": [{"entity": e} for e in automation_entities]})
