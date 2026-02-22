@@ -24,11 +24,17 @@
     "step": {
       "init": {
         "title": "MAM Manager options",
-        "description": "Enable or disable daily automations.",
+        "description": "Update User ID or MAM session cookie if your session expired, then enable or disable daily automations.",
         "data": {
+          "user_id": "User ID",
+          "mam_id": "MAM session cookie (mam_id)",
           "auto_buy_credit": "Auto buy credit (once per day)",
           "auto_donate_vault": "Auto donate to vault (once per day)",
           "auto_buy_vip": "Auto buy VIP (once per day)"
+        },
+        "data_description": {
+          "user_id": "Numeric user ID. Change only if needed.",
+          "mam_id": "Cookie value from browser after logging in. Paste new value here if session expired."
         }
       }
     }

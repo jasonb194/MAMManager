@@ -127,7 +127,7 @@ class MAMManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class MAMManagerOptionsFlow(config_entries.OptionsFlow):
-    """Handle MAM Manager options: auto buy credit, donate, buy VIP (URLs are fixed)."""
+    """Handle MAM Manager options: credentials and daily automations."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
@@ -135,13 +135,65 @@ class MAMManagerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Options: daily automations only."""
-        if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+        """Options: credentials (user ID / MAM ID) and daily automations."""
+        entry_data = self._config_entry.data or {}
+        opts = self._config_entry.options or entry_data
+        errors: dict[str, str] = {}
 
-        opts = self._config_entry.options or {}
+        if user_input is not None:
+            user_id = (user_input.get(CONF_USER_ID) or "").strip()
+            mam_id = (user_input.get(CONF_MAM_ID) or "").strip()
+            current_user_id = (entry_data.get(CONF_USER_ID) or "").strip()
+            current_mam_id = (entry_data.get(CONF_MAM_ID) or "").strip()
+
+            # Update credentials if changed
+            if user_id != current_user_id or mam_id != current_mam_id:
+                if not _validate_user_id(user_id):
+                    errors["base"] = "invalid_user_id"
+                elif not mam_id:
+                    errors["base"] = "cannot_connect"
+                else:
+                    ok, err = await _test_mam_connection(
+                        self.hass, DEFAULT_BASE_URL, user_id, mam_id
+                    )
+                    if not ok:
+                        errors["base"] = err or "cannot_connect"
+                    else:
+                        self.hass.config_entries.async_update_entry(
+                            self._config_entry,
+                            data={
+                                **entry_data,
+                                CONF_USER_ID: user_id,
+                                CONF_MAM_ID: mam_id,
+                            },
+                        )
+
+            if not errors:
+                return self.async_create_entry(
+                    title="",
+                    data={
+                        CONF_AUTO_BUY_CREDIT: user_input.get(
+                            CONF_AUTO_BUY_CREDIT, DEFAULT_AUTO_BUY_CREDIT
+                        ),
+                        CONF_AUTO_DONATE_VAULT: user_input.get(
+                            CONF_AUTO_DONATE_VAULT, DEFAULT_AUTO_DONATE_VAULT
+                        ),
+                        CONF_AUTO_BUY_VIP: user_input.get(
+                            CONF_AUTO_BUY_VIP, DEFAULT_AUTO_BUY_VIP
+                        ),
+                    },
+                )
+
         schema = vol.Schema(
             {
+                vol.Optional(
+                    CONF_USER_ID,
+                    default=entry_data.get(CONF_USER_ID, ""),
+                ): str,
+                vol.Optional(
+                    CONF_MAM_ID,
+                    default=entry_data.get(CONF_MAM_ID, ""),
+                ): str,
                 vol.Required(
                     CONF_AUTO_BUY_CREDIT,
                     default=opts.get(CONF_AUTO_BUY_CREDIT, DEFAULT_AUTO_BUY_CREDIT),
@@ -156,4 +208,6 @@ class MAMManagerOptionsFlow(config_entries.OptionsFlow):
                 ): cv.boolean,
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(
+            step_id="init", data_schema=schema, errors=errors
+        )
