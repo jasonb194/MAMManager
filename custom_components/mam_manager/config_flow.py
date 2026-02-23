@@ -263,6 +263,7 @@ class MAMManagerOptionsFlow(config_entries.OptionsFlow):
                 or (current_password and password_input == current_password[:5] + "****")
             )
             new_password = current_password if password_unchanged else password_input
+            entry_updated = False
 
             # If user pasted a new cookie (mam_id), use it first so they can set/restore session
             use_user_id = (user_id or current_user_id).strip()
@@ -281,6 +282,7 @@ class MAMManagerOptionsFlow(config_entries.OptionsFlow):
                     self.hass.config_entries.async_update_entry(
                         self._config_entry, data=update
                     )
+                    entry_updated = True
             elif username and (new_password or current_password):
                 # Save username/password only; preserve mam_id so both are used (mam_id for API/VIP/credit, username/pass for donate)
                 self.hass.config_entries.async_update_entry(
@@ -291,6 +293,7 @@ class MAMManagerOptionsFlow(config_entries.OptionsFlow):
                         CONF_PASSWORD: new_password,
                     },
                 )
+                entry_updated = True
             elif mam_id != current_mam_id:
                 # They changed mam_id but validation failed above (e.g. empty or bad user_id)
                 if not _validate_user_id(user_id):
@@ -299,6 +302,13 @@ class MAMManagerOptionsFlow(config_entries.OptionsFlow):
                     errors["base"] = "cannot_connect"
 
             if not errors:
+                # Refresh coordinator so sensors and dashboard update when config was changed
+                if entry_updated:
+                    coordinator = self.hass.data.get(DOMAIN, {}).get(
+                        self._config_entry.entry_id, {}
+                    ).get("coordinator")
+                    if coordinator:
+                        await coordinator.async_request_refresh()
                 return self.async_create_entry(
                     title="",
                     data={

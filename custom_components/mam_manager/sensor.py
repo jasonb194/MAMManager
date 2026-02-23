@@ -44,11 +44,11 @@ async def async_setup_entry(
 
     entities: list[SensorEntity] = [
         MAMManagerStatusSensor(entry, coordinator),
-        MAMManagerConfigUsernameSensor(entry),
-        MAMManagerPasswordPreviewSensor(entry),
-        MAMManagerUserIDSensor(entry),
+        MAMManagerConfigUsernameSensor(entry, coordinator),
+        MAMManagerPasswordPreviewSensor(entry, coordinator),
+        MAMManagerUserIDSensor(entry, coordinator),
         MAMManagerMamIdPreviewSensor(entry, coordinator),
-        MAMManagerMbscPreviewSensor(entry),
+        MAMManagerMbscPreviewSensor(entry, coordinator),
         MAMManagerStatSensor(entry, coordinator, "classname", "Class", "classname"),
         MAMManagerStatSensor(entry, coordinator, "uploaded", "Uploaded", "uploaded"),
         MAMManagerStatSensor(entry, coordinator, "downloaded", "Downloaded", "downloaded"),
@@ -113,13 +113,14 @@ class MAMManagerStatusSensor(CoordinatorEntity, SensorEntity):
         }
 
 
-class MAMManagerConfigUsernameSensor(SensorEntity):
-    """Login username (email) from config."""
+class MAMManagerConfigUsernameSensor(CoordinatorEntity, SensorEntity):
+    """Login username (email) from config. Uses coordinator to refresh when config changes."""
 
     _attr_has_entity_name = True
     _attr_name = "Login username"
 
-    def __init__(self, entry: ConfigEntry) -> None:
+    def __init__(self, entry: ConfigEntry, coordinator) -> None:
+        super().__init__(coordinator)
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_config_username"
         self._attr_device_info = _device_info(entry)
@@ -129,13 +130,14 @@ class MAMManagerConfigUsernameSensor(SensorEntity):
         return (self._entry.data or {}).get(CONF_USERNAME) or "Not set"
 
 
-class MAMManagerPasswordPreviewSensor(SensorEntity):
-    """First 5 characters of stored password (masked) for identification only."""
+class MAMManagerPasswordPreviewSensor(CoordinatorEntity, SensorEntity):
+    """First 5 characters of stored password (masked). Uses coordinator to refresh when config changes."""
 
     _attr_has_entity_name = True
     _attr_name = "Password (first 5 chars)"
 
-    def __init__(self, entry: ConfigEntry) -> None:
+    def __init__(self, entry: ConfigEntry, coordinator) -> None:
+        super().__init__(coordinator)
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_password_preview"
         self._attr_device_info = _device_info(entry)
@@ -148,13 +150,14 @@ class MAMManagerPasswordPreviewSensor(SensorEntity):
         return password[:5] + "****"
 
 
-class MAMManagerUserIDSensor(SensorEntity):
-    """User ID from config (always available)."""
+class MAMManagerUserIDSensor(CoordinatorEntity, SensorEntity):
+    """User ID from config. Uses coordinator to refresh when config changes."""
 
     _attr_has_entity_name = True
     _attr_name = "User ID"
 
-    def __init__(self, entry: ConfigEntry) -> None:
+    def __init__(self, entry: ConfigEntry, coordinator) -> None:
+        super().__init__(coordinator)
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_user_id"
         self._attr_device_info = _device_info(entry)
@@ -184,13 +187,14 @@ class MAMManagerMamIdPreviewSensor(CoordinatorEntity, SensorEntity):
         return mam_id[:10]
 
 
-class MAMManagerMbscPreviewSensor(SensorEntity):
-    """First 10 characters of mbsc (session cookie for donate)."""
+class MAMManagerMbscPreviewSensor(CoordinatorEntity, SensorEntity):
+    """First 10 characters of mbsc (session cookie for donate). Uses coordinator to refresh when config changes."""
 
     _attr_has_entity_name = True
     _attr_name = "Session cookie (mbsc)"
 
-    def __init__(self, entry: ConfigEntry) -> None:
+    def __init__(self, entry: ConfigEntry, coordinator) -> None:
+        super().__init__(coordinator)
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_mbsc_preview"
         self._attr_device_info = _device_info(entry)
