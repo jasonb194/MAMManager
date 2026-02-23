@@ -13,7 +13,10 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     ALLOWED_CLASSNAMES_FOR_AUTO_VIP,
     CONF_MAM_ID,
+    CONF_MBSC,
+    CONF_PASSWORD,
     CONF_USER_ID,
+    CONF_USERNAME,
     DOMAIN,
 )
 
@@ -41,8 +44,11 @@ async def async_setup_entry(
 
     entities: list[SensorEntity] = [
         MAMManagerStatusSensor(entry, coordinator),
+        MAMManagerConfigUsernameSensor(entry),
+        MAMManagerPasswordPreviewSensor(entry),
         MAMManagerUserIDSensor(entry),
         MAMManagerMamIdPreviewSensor(entry, coordinator),
+        MAMManagerMbscPreviewSensor(entry),
         MAMManagerStatSensor(entry, coordinator, "classname", "Class", "classname"),
         MAMManagerStatSensor(entry, coordinator, "uploaded", "Uploaded", "uploaded"),
         MAMManagerStatSensor(entry, coordinator, "downloaded", "Downloaded", "downloaded"),
@@ -107,6 +113,41 @@ class MAMManagerStatusSensor(CoordinatorEntity, SensorEntity):
         }
 
 
+class MAMManagerConfigUsernameSensor(SensorEntity):
+    """Login username (email) from config."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Login username"
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_config_username"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def native_value(self) -> str:
+        return (self._entry.data or {}).get(CONF_USERNAME) or "Not set"
+
+
+class MAMManagerPasswordPreviewSensor(SensorEntity):
+    """First 5 characters of stored password (masked) for identification only."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Password (first 5 chars)"
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_password_preview"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def native_value(self) -> str:
+        password = (self._entry.data or {}).get(CONF_PASSWORD) or ""
+        if not password:
+            return "Not set"
+        return password[:5] + "****"
+
+
 class MAMManagerUserIDSensor(SensorEntity):
     """User ID from config (always available)."""
 
@@ -124,10 +165,10 @@ class MAMManagerUserIDSensor(SensorEntity):
 
 
 class MAMManagerMamIdPreviewSensor(CoordinatorEntity, SensorEntity):
-    """First 10 characters of mam_id (session cookie) for identification only."""
+    """First 10 characters of mam_id (session cookie for API/VIP/credit)."""
 
     _attr_has_entity_name = True
-    _attr_name = "MAM ID (first 10 chars)"
+    _attr_name = "Session cookie (mam_id)"
 
     def __init__(self, entry: ConfigEntry, coordinator) -> None:
         super().__init__(coordinator)
@@ -141,6 +182,25 @@ class MAMManagerMamIdPreviewSensor(CoordinatorEntity, SensorEntity):
         if not mam_id:
             return "Not set"
         return mam_id[:10]
+
+
+class MAMManagerMbscPreviewSensor(SensorEntity):
+    """First 10 characters of mbsc (session cookie for donate)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Session cookie (mbsc)"
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_mbsc_preview"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def native_value(self) -> str:
+        mbsc = (self._entry.data or {}).get(CONF_MBSC) or ""
+        if not mbsc:
+            return "Not set"
+        return mbsc[:10]
 
 
 class MAMManagerStatSensor(CoordinatorEntity, SensorEntity):
