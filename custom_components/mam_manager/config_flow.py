@@ -160,33 +160,6 @@ async def _login_mam(
         return None, "cannot_connect"
 
 
-async def _fetch_user_id_after_login(
-    hass: HomeAssistant, base_url: str, mam_id: str
-) -> str | None:
-    """After login, fetch user data to get user_id. Tries id=0 then empty."""
-    base_url = _normalize_base_url(base_url)
-    url = base_url + USER_DATA_PATH
-    params = {"id": "0"}
-    for key in USER_DATA_PARAMS:
-        params[key] = ""
-    headers = {"Cookie": f"mam_id={mam_id}"}
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=15)
-            ) as resp:
-                if resp.status != 200:
-                    return None
-                data = await resp.json()
-                if isinstance(data, dict):
-                    uid = data.get("id") or data.get("user_id")
-                    if uid is not None:
-                        return str(uid).strip()
-                return None
-    except Exception:
-        return None
-
-
 class MAMManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle config flow for MAM Manager."""
 
@@ -218,83 +191,46 @@ class MAMManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             username = (user_input.get(CONF_USERNAME) or "").strip()
             password = (user_input.get(CONF_PASSWORD) or "")
 
-            use_login = bool(username and password)
-            use_cookie = bool(user_id and mam_id)
-
-            # When username/password are provided, always verify login works before saving
-            if use_login:
-                session_cookie, err = await _login_mam(
-                    self.hass, DEFAULT_BASE_URL, username, password
-                )
-                if err:
-                    errors["base"] = err
-                elif not session_cookie:
-                    errors["base"] = "cannot_connect"
-                elif session_cookie:
-                    mam_id = session_cookie
-                    user_id = await _fetch_user_id_after_login(
-                        self.hass, DEFAULT_BASE_URL, session_cookie
-                    )
-                    if not user_id:
-                        user_id = (user_input.get(CONF_USER_ID) or "").strip()
-                    if not user_id or not _validate_user_id(user_id):
-                        errors["base"] = "user_id_required" if not user_id else "invalid_user_id"
-                    else:
-                        return self.async_create_entry(
-                            title=username or user_id or "MAM",
-                            data={
-                                CONF_BASE_URL: DEFAULT_BASE_URL,
-                                CONF_USER_ID: user_id,
-                                CONF_MAM_ID: mam_id,
-                                CONF_USERNAME: username,
-                                CONF_PASSWORD: password,
-                            },
-                            options={
-                                CONF_AUTO_BUY_CREDIT: DEFAULT_AUTO_BUY_CREDIT,
-                                CONF_AUTO_DONATE_VAULT: DEFAULT_AUTO_DONATE_VAULT,
-                                CONF_AUTO_BUY_VIP: DEFAULT_AUTO_BUY_VIP,
-                            },
-                        )
-            elif use_cookie:
-                # If they also provided username/password, verify login works (e.g. for donate later)
-                if username and password:
-                    _, login_err = await _login_mam(
-                        self.hass, DEFAULT_BASE_URL, username, password
-                    )
-                    if login_err:
-                        errors["base"] = login_err
-                    if errors:
-                        return self.async_show_form(
-                            step_id="user", data_schema=schema, errors=errors
-                        )
-                if not _validate_user_id(user_id):
-                    errors["base"] = "invalid_user_id"
-                else:
-                    ok, err = await _test_mam_connection(
-                        self.hass, DEFAULT_BASE_URL, user_id, mam_id
-                    )
-                    if not ok:
-                        errors["base"] = err or "cannot_connect"
-                    else:
-                        entry_data = {
-                            CONF_BASE_URL: DEFAULT_BASE_URL,
-                            CONF_USER_ID: user_id,
-                            CONF_MAM_ID: mam_id,
-                        }
-                        if username and password:
-                            entry_data[CONF_USERNAME] = username
-                            entry_data[CONF_PASSWORD] = password
-                        return self.async_create_entry(
-                            title=user_id or "MAM",
-                            data=entry_data,
-                            options={
-                                CONF_AUTO_BUY_CREDIT: DEFAULT_AUTO_BUY_CREDIT,
-                                CONF_AUTO_DONATE_VAULT: DEFAULT_AUTO_DONATE_VAULT,
-                                CONF_AUTO_BUY_VIP: DEFAULT_AUTO_BUY_VIP,
-                            },
-                        )
-            else:
+            # User ID and mam_id are required (for stats) and must be entered manually.
+            if not user_id or not mam_id:
                 errors["base"] = "missing_credentials"
+            elif not _validate_user_id(user_id):
+                errors["base"] = "invalid_user_id"
+            else:
+                ok, err = await _test_mam_connection(
+                    self.hass, DEFAULT_BASE_URL, user_id, mam_id
+                )
+                if not ok:
+                    errors["base"] = err or "cannot_connect"
+                else:
+                    # If username/password also provided, verify login before saving
+                    if username and password:
+                        _, login_err = await _login_mam(
+                            self.hass, DEFAULT_BASE_URL, username, password
+                        )
+                        if login_err:
+                            errors["base"] = login_err
+                        if errors:
+                            return self.async_show_form(
+                                step_id="user", data_schema=schema, errors=errors
+                            )
+                    entry_data = {
+                        CONF_BASE_URL: DEFAULT_BASE_URL,
+                        CONF_USER_ID: user_id,
+                        CONF_MAM_ID: mam_id,
+                    }
+                    if username and password:
+                        entry_data[CONF_USERNAME] = username
+                        entry_data[CONF_PASSWORD] = password
+                    return self.async_create_entry(
+                        title=user_id or "MAM",
+                        data=entry_data,
+                        options={
+                            CONF_AUTO_BUY_CREDIT: DEFAULT_AUTO_BUY_CREDIT,
+                            CONF_AUTO_DONATE_VAULT: DEFAULT_AUTO_DONATE_VAULT,
+                            CONF_AUTO_BUY_VIP: DEFAULT_AUTO_BUY_VIP,
+                        },
+                    )
 
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
@@ -328,47 +264,39 @@ class MAMManagerOptionsFlow(config_entries.OptionsFlow):
             )
             new_password = current_password if password_unchanged else password_input
 
-            # Prefer login if username + new password provided
-            if username and (new_password or current_password):
-                session_cookie, err = await _login_mam(
-                    self.hass, DEFAULT_BASE_URL, username, new_password
+            # If user pasted a new cookie (mam_id), use it first so they can set/restore session
+            use_user_id = (user_id or current_user_id).strip()
+            if (user_id != current_user_id or mam_id != current_mam_id) and mam_id and _validate_user_id(use_user_id):
+                ok, err = await _test_mam_connection(
+                    self.hass, DEFAULT_BASE_URL, use_user_id, mam_id
                 )
-                if not err and session_cookie:
-                    mam_id = session_cookie
-                    user_id = await _fetch_user_id_after_login(
-                        self.hass, DEFAULT_BASE_URL, session_cookie
-                    ) or user_id or current_user_id
+                if not ok:
+                    errors["base"] = err or "cannot_connect"
+                else:
+                    update = {**entry_data, CONF_USER_ID: use_user_id, CONF_MAM_ID: mam_id}
+                    # Keep both: mam_id and username/password (from form or existing)
+                    if username:
+                        update[CONF_USERNAME] = username
+                        update[CONF_PASSWORD] = new_password or entry_data.get(CONF_PASSWORD, "")
                     self.hass.config_entries.async_update_entry(
-                        self._config_entry,
-                        data={
-                            **entry_data,
-                            CONF_USER_ID: user_id,
-                            CONF_MAM_ID: mam_id,
-                            CONF_USERNAME: username,
-                            CONF_PASSWORD: new_password,
-                        },
+                        self._config_entry, data=update
                     )
-                elif err:
-                    errors["base"] = err
-            elif user_id != current_user_id or mam_id != current_mam_id:
+            elif username and (new_password or current_password):
+                # Save username/password only; preserve mam_id so both are used (mam_id for API/VIP/credit, username/pass for donate)
+                self.hass.config_entries.async_update_entry(
+                    self._config_entry,
+                    data={
+                        **entry_data,
+                        CONF_USERNAME: username,
+                        CONF_PASSWORD: new_password,
+                    },
+                )
+            elif mam_id != current_mam_id:
+                # They changed mam_id but validation failed above (e.g. empty or bad user_id)
                 if not _validate_user_id(user_id):
                     errors["base"] = "invalid_user_id"
                 elif not mam_id:
                     errors["base"] = "cannot_connect"
-                else:
-                    ok, err = await _test_mam_connection(
-                        self.hass, DEFAULT_BASE_URL, user_id, mam_id
-                    )
-                    if not ok:
-                        errors["base"] = err or "cannot_connect"
-                    else:
-                        update = {**entry_data, CONF_USER_ID: user_id, CONF_MAM_ID: mam_id}
-                        if entry_data.get(CONF_USERNAME):
-                            update[CONF_USERNAME] = entry_data.get(CONF_USERNAME, "")
-                            update[CONF_PASSWORD] = entry_data.get(CONF_PASSWORD, "")
-                        self.hass.config_entries.async_update_entry(
-                            self._config_entry, data=update
-                        )
 
             if not errors:
                 return self.async_create_entry(

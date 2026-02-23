@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "MAM Manager",
-        "description": "Connect to MyAnonamouse. Either enter your **User ID** and **MAM session cookie**, or log in with **Username (email)** and **Password** to obtain a session automatically. When you provide username and password, we will verify the login works before saving.",
+        "description": "Connect to MyAnonamouse. **User ID** and **MAM session cookie** are required (for stats, credits and VIP) and must be entered manually. **Username** and **Password** are optional (for auto-donate only); if provided we verify login before saving.",
         "data": {
           "user_id": "User ID",
           "mam_id": "MAM session cookie (mam_id or mbsc)",
@@ -11,17 +11,17 @@
           "password": "Password"
         },
         "data_description": {
-          "user_id": "Your MAM user ID (numeric). Optional if logging in with username/password.",
-          "mam_id": "Cookie value from your browser after logging in. Leave blank if using username/password.",
-          "username": "Your MAM login email. Use this with password to obtain a session automatically.",
-          "password": "Your MAM login password. Stored for re-login; only first 5 characters are shown in options."
+          "user_id": "Your MAM user ID (numeric). Required for stats, credits and VIP.",
+          "mam_id": "Session cookie from your browser. Required for stats, credits and VIP.",
+          "username": "MAM login email. Optional; required for auto-donate to vault.",
+          "password": "MAM login password. Optional; required for auto-donate. Only first 5 characters shown in options."
         }
       }
     },
     "error": {
       "cannot_connect": "Could not connect to MAM. Check user ID and cookie, or username and password.",
       "invalid_user_id": "User ID must be a number.",
-      "missing_credentials": "Enter either User ID + session cookie, or Username + Password.",
+      "missing_credentials": "User ID and session cookie are required. Enter them manually (from your browser after logging in to MAM).",
       "invalid_auth": "Login failed. Check username and password.",
       "invalid_username": "Username (email) is required for login.",
       "user_id_required": "We could not detect your user ID. Please enter your MAM user ID (numeric)."
@@ -32,7 +32,7 @@
     "step": {
       "init": {
         "title": "MAM Manager options",
-        "description": "Update credentials (User ID and cookie, or Username and Password). When you change username or password, we will verify the login works before saving. Password on file starts with: **{password_preview}** — leave password blank to keep current. Then enable or disable daily automations.",
+        "description": "**User ID** and **session cookie** are required (for stats, credits and VIP). **Username** and **Password** are optional (for auto-donate only). Password on file starts with: **{password_preview}** — leave blank to keep. Then enable or disable daily automations.",
         "data": {
           "user_id": "User ID",
           "mam_id": "MAM session cookie",
@@ -43,13 +43,13 @@
           "auto_buy_vip": "Auto buy VIP (once per day)"
         },
         "data_description": {
-          "user_id": "Numeric user ID.",
-          "mam_id": "Cookie value from browser. Or use Username + Password below to re-login.",
-          "username": "MAM login email (for re-login to refresh session).",
-          "password": "MAM login password. Leave blank to keep current. Only first 5 characters are shown when set.",
-          "auto_buy_credit": "Once per day, spend seedbonus on upload credit (if eligible).",
-          "auto_donate_vault": "Once per day, donate points to vault (if ratio allows).",
-          "auto_buy_vip": "Once per day, buy VIP with seedbonus (if eligible)."
+          "user_id": "Numeric user ID. Required for stats, credits and VIP.",
+          "mam_id": "Session cookie from browser. Required for stats, credits and VIP.",
+          "username": "MAM login email. Optional; needed for auto-donate.",
+          "password": "MAM login password. Optional; needed for auto-donate. Leave blank to keep current.",
+          "auto_buy_credit": "Once per day, spend seedbonus on upload credit (requires User ID + cookie).",
+          "auto_donate_vault": "Once per day, donate points to vault (requires Username + Password).",
+          "auto_buy_vip": "Once per day, buy VIP with seedbonus (requires User ID + cookie)."
         }
       }
     }
