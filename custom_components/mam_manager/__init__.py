@@ -202,21 +202,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def _run_daily_actions(*_args, **_kwargs) -> None:
         """Run once per day: donate (fresh login + mbsc), then buy VIP/credit (mam_id only)."""
+        _LOGGER.info("MAM Manager: daily run started")
         options = entry.options or entry.data or {}
         data = entry.data or {}
         base_url = (data.get(CONF_BASE_URL) or DEFAULT_BASE_URL).strip()
         mam_id = (data.get(CONF_MAM_ID) or "").strip()
         has_creds = bool((data.get(CONF_USERNAME) or "").strip() and (data.get(CONF_PASSWORD) or ""))
         if not mam_id and not has_creds:
+            _LOGGER.warning("MAM Manager: daily run skipped (no credentials: set user ID + cookie or username + password)")
             return
         today = _today_iso()
         saved = await store.async_load() or {}
         updated = False
+        donate_status = "skipped_off"
+        vip_status = "skipped_off"
+        credit_status = "skipped_off"
 
         # 1) Donate: only via username/password; fresh login every day, use mbsc only; update mbsc from response
         if options.get(CONF_AUTO_DONATE_VAULT) and DEFAULT_DONATE_VAULT_PATH:
             if not has_creds:
-                _LOGGER.debug("MAM Manager: auto donate skipped (username/password required for donate)")
+                donate_status = "skipped_no_creds"
+                _LOGGER.info("MAM Manager: donate skipped (username/password required for donate)")
             elif saved.get(STORAGE_LAST_DONATE_DATE) != today:
                 user_data = (coordinator.data or {}).get("user_data") or {}
                 ratio_val = user_data.get("ratio")
@@ -231,6 +237,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     password = data.get(CONF_PASSWORD) or ""
                     session_cookie, login_err = await _login_mam(hass, base_url, username, password)
                     if login_err:
+                        donate_status = "skipped_login_failed"
                         _LOGGER.warning("MAM Manager: donate skipped (login failed: %s)", login_err)
                     elif session_cookie:
                         # Update mam_id from login so API/VIP/credit use fresh session
@@ -267,13 +274,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         if ok:
                             saved[STORAGE_LAST_DONATE_DATE] = today
                             updated = True
-                            _LOGGER.info("MAM Manager: auto donate to vault completed for today")
+                            donate_status = "done"
+                            _LOGGER.info("MAM Manager: donate to vault completed for today")
+                        else:
+                            donate_status = "skipped_request_failed"
+                            _LOGGER.warning("MAM Manager: donate request failed (check site/connection)")
                 else:
-                    _LOGGER.debug(
-                        "MAM Manager: auto donate to vault skipped (ratio %s < %s)",
+                    donate_status = "skipped_ratio"
+                    _LOGGER.info(
+                        "MAM Manager: donate skipped (ratio %s < %s)",
                         ratio_val,
                         MIN_RATIO_FOR_DONATE,
                     )
+            else:
+                donate_status = "already_done"
+                _LOGGER.info("MAM Manager: donate already done today, skipping")
         await coordinator.async_request_refresh()
         mam_id = (entry.data or {}).get(CONF_MAM_ID) or mam_id
 
@@ -300,18 +315,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         if ok:
                             saved[STORAGE_LAST_BUY_VIP_DATE] = today
                             updated = True
-                            _LOGGER.info("MAM Manager: auto buy VIP completed for today")
-                elif options.get(CONF_AUTO_BUY_VIP):
-                    _LOGGER.debug(
-                        "MAM Manager: auto buy VIP skipped (seedbonus %s < %s)",
+                            vip_status = "done"
+                            _LOGGER.info("MAM Manager: buy VIP completed for today")
+                        else:
+                            vip_status = "skipped_request_failed"
+                            _LOGGER.warning("MAM Manager: buy VIP request failed")
+                    else:
+                        vip_status = "already_done"
+                        _LOGGER.info("MAM Manager: VIP already bought today, skipping")
+                else:
+                    vip_status = "skipped_seedbonus"
+                    _LOGGER.info(
+                        "MAM Manager: VIP skipped (seedbonus %s < %s)",
                         seedbonus,
                         MIN_SEEDBONUS_FOR_VIP,
                     )
-            elif classname and options.get(CONF_AUTO_BUY_VIP):
-                _LOGGER.debug(
-                    "MAM Manager: auto buy VIP skipped (classname '%s' not in %s)",
-                    user_data.get("classname"),
-                    ALLOWED_CLASSNAMES_FOR_AUTO_VIP,
+            else:
+                vip_status = "skipped_class"
+                _LOGGER.info(
+                    "MAM Manager: VIP skipped (class '%s' not eligible)",
+                    user_data.get("classname") or "?",
                 )
         await coordinator.async_request_refresh()
         mam_id = (entry.data or {}).get(CONF_MAM_ID) or mam_id
@@ -335,14 +358,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     if ok:
                         saved[STORAGE_LAST_BUY_CREDIT_DATE] = today
                         updated = True
-                        _LOGGER.info("MAM Manager: auto buy credit completed for today")
-            elif options.get(CONF_AUTO_BUY_CREDIT):
-                _LOGGER.debug(
-                    "MAM Manager: auto buy credit skipped (seedbonus %s < %s)",
+                        credit_status = "done"
+                        _LOGGER.info("MAM Manager: buy credit completed for today")
+                    else:
+                        credit_status = "skipped_request_failed"
+                        _LOGGER.warning("MAM Manager: buy credit request failed")
+                else:
+                    credit_status = "already_done"
+                    _LOGGER.info("MAM Manager: credit already bought today, skipping")
+            else:
+                credit_status = "skipped_seedbonus"
+                _LOGGER.info(
+                    "MAM Manager: credit skipped (seedbonus %s < %s)",
                     seedbonus,
                     MIN_SEEDBONUS_FOR_CREDIT,
                 )
 
+        _LOGGER.info(
+            "MAM Manager: daily run finished — donate: %s, VIP: %s, credit: %s",
+            donate_status,
+            vip_status,
+            credit_status,
+        )
         if updated:
             await store.async_save(saved)
             await coordinator.async_request_refresh()
