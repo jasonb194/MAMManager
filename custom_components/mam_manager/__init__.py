@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date
 
 import aiohttp
@@ -23,6 +24,7 @@ from .const import (
     DEFAULT_BASE_URL,
     DEFAULT_BUY_CREDIT_PATH,
     DEFAULT_BUY_VIP_PATH,
+    DEFAULT_DONATE_POINTS,
     DEFAULT_DONATE_VAULT_PATH,
     DOMAIN,
     MIN_RATIO_FOR_DONATE,
@@ -91,8 +93,10 @@ async def _mam_request(
     mam_id: str,
     method: str = "get",
     json_body: dict | None = None,
+    form_data: dict | None = None,
 ) -> tuple[bool, str | None]:
-    """Perform a request to MAM (e.g. buy credit or donate). Returns (success, new_mam_id or None)."""
+    """Perform a request to MAM (e.g. buy credit or donate). Returns (success, new_mam_id or None).
+    Use form_data for application/x-www-form-urlencoded POST (e.g. donate form)."""
     if not path or not path.strip():
         return False, None
     url = base_url.rstrip("/") + path.strip()
@@ -103,15 +107,26 @@ async def _mam_request(
     try:
         async with aiohttp.ClientSession() as session:
             if method.lower() == "post":
-                async with session.post(
-                    url, headers=headers, json=json_body or {}, timeout=aiohttp.ClientTimeout(total=15)
-                ) as resp:
-                    if "Set-Cookie" in resp.headers or "set-cookie" in resp.headers:
-                        set_cookie = resp.headers.get("Set-Cookie") or resp.headers.get("set-cookie") or ""
-                        part = set_cookie.split(";")[0].strip()
-                        if "=" in part:
-                            new_cookie = part.split("=", 1)[1].strip()
-                    return resp.status in (200, 201, 204), new_cookie
+                if form_data is not None:
+                    async with session.post(
+                        url, headers=headers, data=form_data, timeout=aiohttp.ClientTimeout(total=15)
+                    ) as resp:
+                        if "Set-Cookie" in resp.headers or "set-cookie" in resp.headers:
+                            set_cookie = resp.headers.get("Set-Cookie") or resp.headers.get("set-cookie") or ""
+                            part = set_cookie.split(";")[0].strip()
+                            if "=" in part:
+                                new_cookie = part.split("=", 1)[1].strip()
+                        return resp.status in (200, 201, 204), new_cookie
+                else:
+                    async with session.post(
+                        url, headers=headers, json=json_body or {}, timeout=aiohttp.ClientTimeout(total=15)
+                    ) as resp:
+                        if "Set-Cookie" in resp.headers or "set-cookie" in resp.headers:
+                            set_cookie = resp.headers.get("Set-Cookie") or resp.headers.get("set-cookie") or ""
+                            part = set_cookie.split(";")[0].strip()
+                            if "=" in part:
+                                new_cookie = part.split("=", 1)[1].strip()
+                        return resp.status in (200, 201, 204), new_cookie
             else:
                 async with session.get(
                     url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)
@@ -198,8 +213,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         ratio_val = 0.0
                 ratio_val = float(ratio_val) if ratio_val is not None else 0.0
                 if ratio_val >= MIN_RATIO_FOR_DONATE:
+                    # MAM donate form: POST application/x-www-form-urlencoded
+                    donate_form = {
+                        "Donation": str(DEFAULT_DONATE_POINTS),
+                        "time": f"{time.time():.4f}",
+                        "submit": "Donate Points",
+                    }
                     ok, new_cookie = await _mam_request(
-                        hass, base_url, DEFAULT_DONATE_VAULT_PATH, mam_id
+                        hass,
+                        base_url,
+                        DEFAULT_DONATE_VAULT_PATH,
+                        mam_id,
+                        method="post",
+                        form_data=donate_form,
                     )
                     if new_cookie:
                         hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_MAM_ID: new_cookie})
