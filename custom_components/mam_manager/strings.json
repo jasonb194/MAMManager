@@ -3,20 +3,28 @@
     "step": {
       "user": {
         "title": "MAM Manager",
-        "description": "Connect to MyAnonamouse. Enter your user ID and session cookie.",
+        "description": "Connect to MyAnonamouse. Either enter your **User ID** and **MAM session cookie**, or log in with **Username (email)** and **Password** to obtain a session automatically. When you provide username and password, we will verify the login works before saving.",
         "data": {
           "user_id": "User ID",
-          "mam_id": "MAM session cookie (mam_id value)"
+          "mam_id": "MAM session cookie (mam_id or mbsc)",
+          "username": "Username (email)",
+          "password": "Password"
         },
         "data_description": {
-          "user_id": "Your MAM user ID (numeric)",
-          "mam_id": "Cookie value from your browser after logging in"
+          "user_id": "Your MAM user ID (numeric). Optional if logging in with username/password.",
+          "mam_id": "Cookie value from your browser after logging in. Leave blank if using username/password.",
+          "username": "Your MAM login email. Use this with password to obtain a session automatically.",
+          "password": "Your MAM login password. Stored for re-login; only first 5 characters are shown in options."
         }
       }
     },
     "error": {
-      "cannot_connect": "Could not connect to MAM. Check user ID and cookie.",
-      "invalid_user_id": "User ID must be a number."
+      "cannot_connect": "Could not connect to MAM. Check user ID and cookie, or username and password.",
+      "invalid_user_id": "User ID must be a number.",
+      "missing_credentials": "Enter either User ID + session cookie, or Username + Password.",
+      "invalid_auth": "Login failed. Check username and password.",
+      "invalid_username": "Username (email) is required for login.",
+      "user_id_required": "We could not detect your user ID. Please enter your MAM user ID (numeric)."
     },
     "abort": {}
   },
@@ -24,17 +32,24 @@
     "step": {
       "init": {
         "title": "MAM Manager options",
-        "description": "Update User ID or MAM session cookie if your session expired, then enable or disable daily automations.",
+        "description": "Update credentials (User ID and cookie, or Username and Password). When you change username or password, we will verify the login works before saving. Password on file starts with: **{password_preview}** — leave password blank to keep current. Then enable or disable daily automations.",
         "data": {
           "user_id": "User ID",
-          "mam_id": "MAM session cookie (mam_id)",
+          "mam_id": "MAM session cookie",
+          "username": "Username (email)",
+          "password": "Password",
           "auto_buy_credit": "Auto buy credit (once per day)",
           "auto_donate_vault": "Auto donate to vault (once per day)",
           "auto_buy_vip": "Auto buy VIP (once per day)"
         },
         "data_description": {
-          "user_id": "Numeric user ID. Change only if needed.",
-          "mam_id": "Cookie value from browser after logging in. Paste new value here if session expired."
+          "user_id": "Numeric user ID.",
+          "mam_id": "Cookie value from browser. Or use Username + Password below to re-login.",
+          "username": "MAM login email (for re-login to refresh session).",
+          "password": "MAM login password. Leave blank to keep current. Only first 5 characters are shown when set.",
+          "auto_buy_credit": "Once per day, spend seedbonus on upload credit (if eligible).",
+          "auto_donate_vault": "Once per day, donate points to vault (if ratio allows).",
+          "auto_buy_vip": "Once per day, buy VIP with seedbonus (if eligible)."
         }
       }
     }

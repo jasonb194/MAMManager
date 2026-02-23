@@ -13,6 +13,7 @@ from homeassistant.helpers.event import async_track_utc_time_change
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
+from .config_flow import _login_mam
 from .const import (
     ALLOWED_CLASSNAMES_FOR_AUTO_VIP,
     CONF_AUTO_BUY_CREDIT,
@@ -20,13 +21,18 @@ from .const import (
     CONF_AUTO_DONATE_VAULT,
     CONF_BASE_URL,
     CONF_MAM_ID,
+    CONF_MBSC,
+    CONF_PASSWORD,
     CONF_USER_ID,
+    CONF_USERNAME,
     DEFAULT_BASE_URL,
     DEFAULT_BUY_CREDIT_PATH,
     DEFAULT_BUY_VIP_PATH,
     DEFAULT_DONATE_POINTS,
     DEFAULT_DONATE_VAULT_PATH,
+    DONATE_COOKIE_NAME,
     DOMAIN,
+    MAM_DONATE_HEADERS,
     MIN_RATIO_FOR_DONATE,
     MIN_SEEDBONUS_FOR_CREDIT,
     MIN_SEEDBONUS_FOR_VIP,
@@ -94,15 +100,20 @@ async def _mam_request(
     method: str = "get",
     json_body: dict | None = None,
     form_data: dict | None = None,
+    cookie_name: str = "mam_id",
+    extra_headers: dict[str, str] | None = None,
 ) -> tuple[bool, str | None]:
     """Perform a request to MAM (e.g. buy credit or donate). Returns (success, new_mam_id or None).
-    Use form_data for application/x-www-form-urlencoded POST (e.g. donate form)."""
+    Use form_data for application/x-www-form-urlencoded POST (e.g. donate form).
+    Use cookie_name='mbsc' for donate. Use extra_headers for donate (browser-like headers)."""
     if not path or not path.strip():
         return False, None
     url = base_url.rstrip("/") + path.strip()
     if not url.startswith("http"):
         return False, None
-    headers = {"Cookie": f"mam_id={mam_id}"}
+    headers = {"Cookie": f"{cookie_name}={mam_id}"}
+    if extra_headers:
+        headers = {**extra_headers, **headers}
     new_cookie = None
     try:
         async with aiohttp.ClientSession() as session:
@@ -190,20 +201,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator, "store": store}
 
     async def _run_daily_actions(*_args, **_kwargs) -> None:
-        """Run once per day: buy credit and/or donate if enabled and not done today."""
+        """Run once per day: donate (fresh login + mbsc), then buy VIP/credit (mam_id only)."""
         options = entry.options or entry.data or {}
         data = entry.data or {}
         base_url = (data.get(CONF_BASE_URL) or DEFAULT_BASE_URL).strip()
         mam_id = (data.get(CONF_MAM_ID) or "").strip()
-        if not mam_id:
+        has_creds = bool((data.get(CONF_USERNAME) or "").strip() and (data.get(CONF_PASSWORD) or ""))
+        if not mam_id and not has_creds:
             return
         today = _today_iso()
         saved = await store.async_load() or {}
         updated = False
 
-        # Order: 1) donate to vault, 2) buy VIP, 3) buy credit (refresh user data between each)
+        # 1) Donate: only via username/password; fresh login every day, use mbsc only; update mbsc from response
         if options.get(CONF_AUTO_DONATE_VAULT) and DEFAULT_DONATE_VAULT_PATH:
-            if saved.get(STORAGE_LAST_DONATE_DATE) != today:
+            if not has_creds:
+                _LOGGER.debug("MAM Manager: auto donate skipped (username/password required for donate)")
+            elif saved.get(STORAGE_LAST_DONATE_DATE) != today:
                 user_data = (coordinator.data or {}).get("user_data") or {}
                 ratio_val = user_data.get("ratio")
                 if isinstance(ratio_val, str):
@@ -213,26 +227,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         ratio_val = 0.0
                 ratio_val = float(ratio_val) if ratio_val is not None else 0.0
                 if ratio_val >= MIN_RATIO_FOR_DONATE:
-                    # MAM donate form: POST application/x-www-form-urlencoded
-                    donate_form = {
-                        "Donation": str(DEFAULT_DONATE_POINTS),
-                        "time": f"{time.time():.4f}",
-                        "submit": "Donate Points",
-                    }
-                    ok, new_cookie = await _mam_request(
-                        hass,
-                        base_url,
-                        DEFAULT_DONATE_VAULT_PATH,
-                        mam_id,
-                        method="post",
-                        form_data=donate_form,
-                    )
-                    if new_cookie:
-                        hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_MAM_ID: new_cookie})
-                    if ok:
-                        saved[STORAGE_LAST_DONATE_DATE] = today
-                        updated = True
-                        _LOGGER.info("MAM Manager: auto donate to vault completed for today")
+                    username = (data.get(CONF_USERNAME) or "").strip()
+                    password = data.get(CONF_PASSWORD) or ""
+                    session_cookie, login_err = await _login_mam(hass, base_url, username, password)
+                    if login_err:
+                        _LOGGER.warning("MAM Manager: donate skipped (login failed: %s)", login_err)
+                    elif session_cookie:
+                        # Update mam_id from login so API/VIP/credit use fresh session
+                        hass.config_entries.async_update_entry(
+                            entry, data={**entry.data, CONF_MAM_ID: session_cookie}
+                        )
+                        # Donate with mbsc only (fresh from login); mbsc changes on every page call
+                        donate_form = {
+                            "Donation": str(DEFAULT_DONATE_POINTS),
+                            "time": f"{time.time():.4f}",
+                            "submit": "Donate Points",
+                        }
+                        donate_url = base_url.rstrip("/") + DEFAULT_DONATE_VAULT_PATH
+                        donate_headers = {
+                            **MAM_DONATE_HEADERS,
+                            "Origin": base_url.rstrip("/"),
+                            "Referer": donate_url + "?",
+                        }
+                        ok, new_cookie = await _mam_request(
+                            hass,
+                            base_url,
+                            DEFAULT_DONATE_VAULT_PATH,
+                            session_cookie,
+                            method="post",
+                            form_data=donate_form,
+                            cookie_name=DONATE_COOKIE_NAME,
+                            extra_headers=donate_headers,
+                        )
+                        # Update local mbsc when donate response sends Set-Cookie
+                        if new_cookie:
+                            hass.config_entries.async_update_entry(
+                                entry, data={**entry.data, CONF_MBSC: new_cookie}
+                            )
+                        if ok:
+                            saved[STORAGE_LAST_DONATE_DATE] = today
+                            updated = True
+                            _LOGGER.info("MAM Manager: auto donate to vault completed for today")
                 else:
                     _LOGGER.debug(
                         "MAM Manager: auto donate to vault skipped (ratio %s < %s)",
@@ -241,6 +276,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     )
         await coordinator.async_request_refresh()
         mam_id = (entry.data or {}).get(CONF_MAM_ID) or mam_id
+
+        # 2) VIP and 3) Credit: always use mam_id only (never mbsc)
 
         if options.get(CONF_AUTO_BUY_VIP) and DEFAULT_BUY_VIP_PATH:
             user_data = (coordinator.data or {}).get("user_data") or {}
