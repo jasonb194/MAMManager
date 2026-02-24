@@ -61,6 +61,26 @@ def _is_valid_session_cookie(value: str | None) -> bool:
     return value.strip().lower() != "deleted"
 
 
+def _get_cookie_value_from_response(resp: aiohttp.ClientResponse, cookie_name: str) -> str | None:
+    """Parse Set-Cookie headers and return the value for cookie_name, or None. Ignores other cookies (e.g. lid)."""
+    cookie_name = cookie_name.strip().lower()
+    for raw in resp.headers.getall("Set-Cookie", []) or []:
+        part = (raw.split(";")[0] or "").strip()
+        if "=" not in part:
+            continue
+        name, value = part.split("=", 1)
+        if name.strip().lower() == cookie_name:
+            return (value or "").strip()
+    single = resp.headers.get("Set-Cookie") or resp.headers.get("set-cookie") or ""
+    if single and "=" in single:
+        part = single.split(";")[0].strip()
+        if "=" in part:
+            name, value = part.split("=", 1)
+            if name.strip().lower() == cookie_name:
+                return (value or "").strip()
+    return None
+
+
 async def _fetch_user_data(
     hass: HomeAssistant,
     base_url: str,
@@ -83,12 +103,7 @@ async def _fetch_user_data(
             async with session.get(
                 url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=15)
             ) as resp:
-                new_cookie = None
-                if "Set-Cookie" in resp.headers or "set-cookie" in resp.headers:
-                    set_cookie = resp.headers.get("Set-Cookie") or resp.headers.get("set-cookie") or ""
-                    part = set_cookie.split(";")[0].strip()
-                    if "=" in part:
-                        new_cookie = part.split("=", 1)[1].strip()
+                new_cookie = _get_cookie_value_from_response(resp, "mam_id")
                 if resp.status != 200:
                     return None, new_cookie
                 data = await resp.json()
@@ -130,31 +145,19 @@ async def _mam_request(
                     async with session.post(
                         url, headers=headers, data=form_data, timeout=aiohttp.ClientTimeout(total=15)
                     ) as resp:
-                        if "Set-Cookie" in resp.headers or "set-cookie" in resp.headers:
-                            set_cookie = resp.headers.get("Set-Cookie") or resp.headers.get("set-cookie") or ""
-                            part = set_cookie.split(";")[0].strip()
-                            if "=" in part:
-                                new_cookie = part.split("=", 1)[1].strip()
+                        new_cookie = _get_cookie_value_from_response(resp, cookie_name)
                         return resp.status in (200, 201, 204), new_cookie
                 else:
                     async with session.post(
                         url, headers=headers, json=json_body or {}, timeout=aiohttp.ClientTimeout(total=15)
                     ) as resp:
-                        if "Set-Cookie" in resp.headers or "set-cookie" in resp.headers:
-                            set_cookie = resp.headers.get("Set-Cookie") or resp.headers.get("set-cookie") or ""
-                            part = set_cookie.split(";")[0].strip()
-                            if "=" in part:
-                                new_cookie = part.split("=", 1)[1].strip()
+                        new_cookie = _get_cookie_value_from_response(resp, cookie_name)
                         return resp.status in (200, 201, 204), new_cookie
             else:
                 async with session.get(
                     url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)
                 ) as resp:
-                    if "Set-Cookie" in resp.headers or "set-cookie" in resp.headers:
-                        set_cookie = resp.headers.get("Set-Cookie") or resp.headers.get("set-cookie") or ""
-                        part = set_cookie.split(";")[0].strip()
-                        if "=" in part:
-                            new_cookie = part.split("=", 1)[1].strip()
+                    new_cookie = _get_cookie_value_from_response(resp, cookie_name)
                     return resp.status == 200, new_cookie
     except Exception as e:
         _LOGGER.warning("MAM request %s failed: %s", path, e)
@@ -234,6 +237,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         vip_actions: list[str] = []
         credit_actions: list[str] = []
 
+        # Ensure we have fresh user data (ratio, seedbonus) before making any decisions
+        await coordinator.async_request_refresh()
+
         # 1) Donate: only via username/password; fresh login every day, use mbsc only; update mbsc from response
         if options.get(CONF_AUTO_DONATE_VAULT) and DEFAULT_DONATE_VAULT_PATH:
             if not has_creds:
@@ -255,7 +261,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     session_cookie, login_err = await _login_mam(hass, base_url, username, password)
                     if login_err:
                         donate_actions.append(f"skipped (login failed: {login_err})")
-                    elif session_cookie:
+                    elif session_cookie and _is_valid_session_cookie(session_cookie):
                         hass.config_entries.async_update_entry(
                             entry, data={**entry.data, CONF_MAM_ID: session_cookie}
                         )
@@ -280,7 +286,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             cookie_name=DONATE_COOKIE_NAME,
                             extra_headers=donate_headers,
                         )
-                        if new_cookie:
+                        if new_cookie and _is_valid_session_cookie(new_cookie):
                             hass.config_entries.async_update_entry(
                                 entry, data={**entry.data, CONF_MBSC: new_cookie}
                             )
@@ -290,9 +296,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             donate_actions.append("done")
                         else:
                             donate_actions.append("request_failed")
+                    elif session_cookie and not _is_valid_session_cookie(session_cookie):
+                        donate_actions.append("skipped (login returned invalid session)")
         else:
             donate_actions.append("off")
-        _LOGGER.warning("MAM Manager: donate — %s", ", ".join(donate_actions))
+        _LOGGER.info("MAM Manager: donate — %s", ", ".join(donate_actions))
         await coordinator.async_request_refresh()
         mam_id = (entry.data or {}).get(CONF_MAM_ID) or mam_id
 
@@ -325,7 +333,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     vip_actions.append("request_failed")
         else:
             vip_actions.append("off")
-        _LOGGER.warning("MAM Manager: VIP — %s", ", ".join(vip_actions))
+        _LOGGER.info("MAM Manager: VIP — %s", ", ".join(vip_actions))
         await coordinator.async_request_refresh()
         mam_id = (entry.data or {}).get(CONF_MAM_ID) or mam_id
 
@@ -354,9 +362,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     credit_actions.append("request_failed")
         else:
             credit_actions.append("off")
-        _LOGGER.warning("MAM Manager: credit — %s", ", ".join(credit_actions))
+        _LOGGER.info("MAM Manager: credit — %s", ", ".join(credit_actions))
 
-        _LOGGER.warning(
+        _LOGGER.info(
             "MAM Manager: daily run finished — donate: %s, VIP: %s, credit: %s",
             ", ".join(donate_actions),
             ", ".join(vip_actions),
