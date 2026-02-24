@@ -1,0 +1,3 @@
+# Service descriptions; full names/descriptions come from strings.json
+reset_last_run_dates:
+  description: Clear stored last-run dates so the next daily run will try donate/VIP/credit again.
