@@ -191,7 +191,7 @@ async def ensure_dashboard(hass: HomeAssistant, entry_id: str | None = None) -> 
             dash = lovelace_data.dashboards.get(DASHBOARD_URL_PATH)
             if dash is not None and hasattr(dash, "async_save"):
                 await dash.async_save(dashboard_config)
-                _LOGGER.info(
+                _LOGGER.warning(
                     "MAM Manager dashboard updated. Open from sidebar or /%s",
                     DASHBOARD_URL_PATH,
                 )
@@ -209,7 +209,7 @@ async def ensure_dashboard(hass: HomeAssistant, entry_id: str | None = None) -> 
         hass.bus.async_fire("lovelace_updated", {"url_path": DASHBOARD_URL_PATH})
     except Exception:
         pass
-    _LOGGER.info(
+    _LOGGER.warning(
         "MAM Manager dashboard saved. Open from sidebar or /%s",
         DASHBOARD_URL_PATH,
     )

@@ -235,152 +235,157 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def _run_daily_actions(*_args, **_kwargs) -> None:
         """Run once per day: donate (fresh login + mbsc), then buy VIP/credit (mam_id only)."""
         _LOGGER.warning("MAM Manager: daily run started")
-        options = entry.options or entry.data or {}
-        data = entry.data or {}
-        base_url = (data.get(CONF_BASE_URL) or DEFAULT_BASE_URL).strip()
-        mam_id = (data.get(CONF_MAM_ID) or "").strip()
-        has_creds = bool((data.get(CONF_USERNAME) or "").strip() and (data.get(CONF_PASSWORD) or ""))
-        if not mam_id and not has_creds:
-            _LOGGER.warning("MAM Manager: daily run skipped (no credentials: set user ID + cookie or username + password)")
-            return
-        today = _today_iso()
-        saved = await store.async_load() or {}
-        updated = False
         donate_actions: list[str] = []
         vip_actions: list[str] = []
         credit_actions: list[str] = []
+        try:
+            options = entry.options or entry.data or {}
+            data = entry.data or {}
+            base_url = (data.get(CONF_BASE_URL) or DEFAULT_BASE_URL).strip()
+            mam_id = (data.get(CONF_MAM_ID) or "").strip()
+            has_creds = bool((data.get(CONF_USERNAME) or "").strip() and (data.get(CONF_PASSWORD) or ""))
+            if not mam_id and not has_creds:
+                _LOGGER.warning("MAM Manager: daily run skipped (no credentials: set user ID + cookie or username + password)")
+                return
+            today = _today_iso()
+            saved = await store.async_load() or {}
+            updated = False
 
-        # Ensure we have fresh user data (ratio, seedbonus) before making any decisions
-        await coordinator.async_request_refresh()
+            # Ensure we have fresh user data (ratio, seedbonus) before making any decisions
+            await coordinator.async_request_refresh()
 
-        # 1) Donate: only via username/password; fresh login every day, use mbsc only; update mbsc from response
-        if options.get(CONF_AUTO_DONATE_VAULT) and DEFAULT_DONATE_VAULT_PATH:
-            if not has_creds:
-                donate_actions.append("skipped (username/password required)")
+            # 1) Donate: only via username/password; fresh login every day, use mbsc only; update mbsc from response
+            if options.get(CONF_AUTO_DONATE_VAULT) and DEFAULT_DONATE_VAULT_PATH:
+                if not has_creds:
+                    donate_actions.append("skipped (username/password required)")
+                else:
+                    user_data = (coordinator.data or {}).get("user_data") or {}
+                    ratio_val = user_data.get("ratio")
+                    if isinstance(ratio_val, str):
+                        try:
+                            ratio_val = float(ratio_val.replace(",", ""))
+                        except (ValueError, TypeError):
+                            ratio_val = 0.0
+                    ratio_val = float(ratio_val) if ratio_val is not None else 0.0
+                    if ratio_val < MIN_RATIO_FOR_DONATE:
+                        donate_actions.append(f"skipped (ratio {ratio_val} < {MIN_RATIO_FOR_DONATE})")
+                    else:
+                        username = (data.get(CONF_USERNAME) or "").strip()
+                        password = data.get(CONF_PASSWORD) or ""
+                        session_cookie, login_err = await _login_mam(hass, base_url, username, password)
+                        if login_err:
+                            donate_actions.append(f"skipped (login failed: {login_err})")
+                        elif session_cookie and _is_valid_session_cookie(session_cookie):
+                            _update_entry_cookie_if_valid(hass, entry, CONF_MAM_ID, session_cookie)
+                            donate_form = {
+                                "Donation": str(DEFAULT_DONATE_POINTS),
+                                "time": f"{time.time():.4f}",
+                                "submit": "Donate Points",
+                            }
+                            donate_url = base_url.rstrip("/") + DEFAULT_DONATE_VAULT_PATH
+                            donate_headers = {
+                                **MAM_DONATE_HEADERS,
+                                "Origin": base_url.rstrip("/"),
+                                "Referer": donate_url + "?",
+                            }
+                            ok, new_cookie = await _mam_request(
+                                hass,
+                                base_url,
+                                DEFAULT_DONATE_VAULT_PATH,
+                                session_cookie,
+                                method="post",
+                                form_data=donate_form,
+                                cookie_name=DONATE_COOKIE_NAME,
+                                extra_headers=donate_headers,
+                            )
+                            _update_entry_cookie_if_valid(hass, entry, CONF_MBSC, new_cookie)
+                            if ok:
+                                saved[STORAGE_LAST_DONATE_DATE] = today
+                                updated = True
+                                donate_actions.append("done")
+                            else:
+                                donate_actions.append("request_failed")
+                        elif session_cookie and not _is_valid_session_cookie(session_cookie):
+                            donate_actions.append("skipped (login returned invalid session)")
             else:
+                donate_actions.append("off")
+            _LOGGER.warning("MAM Manager: donate — %s", ", ".join(donate_actions))
+            await coordinator.async_request_refresh()
+            mam_id = (entry.data or {}).get(CONF_MAM_ID) or mam_id
+
+            # 2) VIP and 3) Credit: always use mam_id only (never mbsc)
+            if options.get(CONF_AUTO_BUY_VIP) and DEFAULT_BUY_VIP_PATH:
                 user_data = (coordinator.data or {}).get("user_data") or {}
-                ratio_val = user_data.get("ratio")
-                if isinstance(ratio_val, str):
+                classname = ((user_data.get("classname") or "").strip()).lower()
+                seedbonus = user_data.get("seedbonus")
+                if isinstance(seedbonus, str):
                     try:
-                        ratio_val = float(ratio_val.replace(",", ""))
+                        seedbonus = int(seedbonus.replace(",", ""))
                     except (ValueError, TypeError):
-                        ratio_val = 0.0
-                ratio_val = float(ratio_val) if ratio_val is not None else 0.0
-                if ratio_val < MIN_RATIO_FOR_DONATE:
-                    donate_actions.append(f"skipped (ratio {ratio_val} < {MIN_RATIO_FOR_DONATE})")
+                        seedbonus = 0
+                seedbonus = int(seedbonus) if seedbonus is not None else 0
+                if classname not in ALLOWED_CLASSNAMES_FOR_AUTO_VIP:
+                    vip_actions.append(f"skipped (class '{user_data.get('classname') or '?'}' not eligible)")
+                elif seedbonus < MIN_SEEDBONUS_FOR_VIP:
+                    vip_actions.append(f"skipped (seedbonus {seedbonus} < {MIN_SEEDBONUS_FOR_VIP})")
                 else:
-                    username = (data.get(CONF_USERNAME) or "").strip()
-                    password = data.get(CONF_PASSWORD) or ""
-                    session_cookie, login_err = await _login_mam(hass, base_url, username, password)
-                    if login_err:
-                        donate_actions.append(f"skipped (login failed: {login_err})")
-                    elif session_cookie and _is_valid_session_cookie(session_cookie):
-                        _update_entry_cookie_if_valid(hass, entry, CONF_MAM_ID, session_cookie)
-                        donate_form = {
-                            "Donation": str(DEFAULT_DONATE_POINTS),
-                            "time": f"{time.time():.4f}",
-                            "submit": "Donate Points",
-                        }
-                        donate_url = base_url.rstrip("/") + DEFAULT_DONATE_VAULT_PATH
-                        donate_headers = {
-                            **MAM_DONATE_HEADERS,
-                            "Origin": base_url.rstrip("/"),
-                            "Referer": donate_url + "?",
-                        }
-                        ok, new_cookie = await _mam_request(
-                            hass,
-                            base_url,
-                            DEFAULT_DONATE_VAULT_PATH,
-                            session_cookie,
-                            method="post",
-                            form_data=donate_form,
-                            cookie_name=DONATE_COOKIE_NAME,
-                            extra_headers=donate_headers,
-                        )
-                        _update_entry_cookie_if_valid(hass, entry, CONF_MBSC, new_cookie)
-                        if ok:
-                            saved[STORAGE_LAST_DONATE_DATE] = today
-                            updated = True
-                            donate_actions.append("done")
-                        else:
-                            donate_actions.append("request_failed")
-                    elif session_cookie and not _is_valid_session_cookie(session_cookie):
-                        donate_actions.append("skipped (login returned invalid session)")
-        else:
-            donate_actions.append("off")
-        _LOGGER.info("MAM Manager: donate — %s", ", ".join(donate_actions))
-        await coordinator.async_request_refresh()
-        mam_id = (entry.data or {}).get(CONF_MAM_ID) or mam_id
-
-        # 2) VIP and 3) Credit: always use mam_id only (never mbsc)
-        if options.get(CONF_AUTO_BUY_VIP) and DEFAULT_BUY_VIP_PATH:
-            user_data = (coordinator.data or {}).get("user_data") or {}
-            classname = ((user_data.get("classname") or "").strip()).lower()
-            seedbonus = user_data.get("seedbonus")
-            if isinstance(seedbonus, str):
-                try:
-                    seedbonus = int(seedbonus.replace(",", ""))
-                except (ValueError, TypeError):
-                    seedbonus = 0
-            seedbonus = int(seedbonus) if seedbonus is not None else 0
-            if classname not in ALLOWED_CLASSNAMES_FOR_AUTO_VIP:
-                vip_actions.append(f"skipped (class '{user_data.get('classname') or '?'}' not eligible)")
-            elif seedbonus < MIN_SEEDBONUS_FOR_VIP:
-                vip_actions.append(f"skipped (seedbonus {seedbonus} < {MIN_SEEDBONUS_FOR_VIP})")
+                    ok, new_cookie = await _mam_request(
+                        hass, base_url, DEFAULT_BUY_VIP_PATH, mam_id
+                    )
+                    if (new_cookie or "").strip() != mam_id:
+                        _update_entry_cookie_if_valid(hass, entry, CONF_MAM_ID, new_cookie)
+                    if ok:
+                        saved[STORAGE_LAST_BUY_VIP_DATE] = today
+                        updated = True
+                        vip_actions.append("done")
+                    else:
+                        vip_actions.append("request_failed")
             else:
-                ok, new_cookie = await _mam_request(
-                    hass, base_url, DEFAULT_BUY_VIP_PATH, mam_id
-                )
-                if (new_cookie or "").strip() != mam_id:
-                    _update_entry_cookie_if_valid(hass, entry, CONF_MAM_ID, new_cookie)
-                if ok:
-                    saved[STORAGE_LAST_BUY_VIP_DATE] = today
-                    updated = True
-                    vip_actions.append("done")
-                else:
-                    vip_actions.append("request_failed")
-        else:
-            vip_actions.append("off")
-        _LOGGER.info("MAM Manager: VIP — %s", ", ".join(vip_actions))
-        await coordinator.async_request_refresh()
-        mam_id = (entry.data or {}).get(CONF_MAM_ID) or mam_id
+                vip_actions.append("off")
+            _LOGGER.warning("MAM Manager: VIP — %s", ", ".join(vip_actions))
+            await coordinator.async_request_refresh()
+            mam_id = (entry.data or {}).get(CONF_MAM_ID) or mam_id
 
-        if options.get(CONF_AUTO_BUY_CREDIT) and DEFAULT_BUY_CREDIT_PATH:
-            user_data = (coordinator.data or {}).get("user_data") or {}
-            seedbonus = user_data.get("seedbonus")
-            if isinstance(seedbonus, str):
-                try:
-                    seedbonus = int(seedbonus.replace(",", ""))
-                except (ValueError, TypeError):
-                    seedbonus = 0
-            seedbonus = int(seedbonus) if seedbonus is not None else 0
-            if seedbonus < MIN_SEEDBONUS_FOR_CREDIT:
-                credit_actions.append(f"skipped (seedbonus {seedbonus} < {MIN_SEEDBONUS_FOR_CREDIT})")
+            if options.get(CONF_AUTO_BUY_CREDIT) and DEFAULT_BUY_CREDIT_PATH:
+                user_data = (coordinator.data or {}).get("user_data") or {}
+                seedbonus = user_data.get("seedbonus")
+                if isinstance(seedbonus, str):
+                    try:
+                        seedbonus = int(seedbonus.replace(",", ""))
+                    except (ValueError, TypeError):
+                        seedbonus = 0
+                seedbonus = int(seedbonus) if seedbonus is not None else 0
+                if seedbonus < MIN_SEEDBONUS_FOR_CREDIT:
+                    credit_actions.append(f"skipped (seedbonus {seedbonus} < {MIN_SEEDBONUS_FOR_CREDIT})")
+                else:
+                    ok, new_cookie = await _mam_request(
+                        hass, base_url, DEFAULT_BUY_CREDIT_PATH, mam_id
+                    )
+                    if (new_cookie or "").strip() != mam_id:
+                        _update_entry_cookie_if_valid(hass, entry, CONF_MAM_ID, new_cookie)
+                    if ok:
+                        saved[STORAGE_LAST_BUY_CREDIT_DATE] = today
+                        updated = True
+                        credit_actions.append("done")
+                    else:
+                        credit_actions.append("request_failed")
             else:
-                ok, new_cookie = await _mam_request(
-                    hass, base_url, DEFAULT_BUY_CREDIT_PATH, mam_id
-                )
-                if (new_cookie or "").strip() != mam_id:
-                    _update_entry_cookie_if_valid(hass, entry, CONF_MAM_ID, new_cookie)
-                if ok:
-                    saved[STORAGE_LAST_BUY_CREDIT_DATE] = today
-                    updated = True
-                    credit_actions.append("done")
-                else:
-                    credit_actions.append("request_failed")
-        else:
-            credit_actions.append("off")
-        _LOGGER.info("MAM Manager: credit — %s", ", ".join(credit_actions))
+                credit_actions.append("off")
+            _LOGGER.warning("MAM Manager: credit — %s", ", ".join(credit_actions))
 
-        _LOGGER.info(
+            if updated:
+                await store.async_save(saved)
+                await coordinator.async_request_refresh()
+        except Exception as e:
+            _LOGGER.warning("MAM Manager: daily run failed: %s", e, exc_info=True)
+            if not donate_actions and not vip_actions and not credit_actions:
+                donate_actions.append("error")
+        _LOGGER.warning(
             "MAM Manager: daily run finished — donate: %s, VIP: %s, credit: %s",
             ", ".join(donate_actions),
             ", ".join(vip_actions),
             ", ".join(credit_actions),
         )
-        if updated:
-            await store.async_save(saved)
-            await coordinator.async_request_refresh()
 
     # Run daily at 02:00 UTC (buy credit and donate)
     remove_daily = async_track_utc_time_change(
@@ -419,7 +424,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     saved.pop(STORAGE_LAST_BUY_CREDIT_DATE, None)
                 await store.async_save(saved)
                 await coordinator.async_request_refresh()
-            _LOGGER.info(
+            _LOGGER.warning(
                 "MAM Manager: reset last run dates — donate=%s, vip=%s, credit=%s",
                 reset_donate,
                 reset_vip,
