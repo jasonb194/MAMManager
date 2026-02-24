@@ -272,10 +272,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     else:
                         username = (data.get(CONF_USERNAME) or "").strip()
                         password = data.get(CONF_PASSWORD) or ""
+                        _LOGGER.warning(
+                            "MAM Manager: donate — attempting login for %s",
+                            (username[:3] + "…") if username else "?",
+                        )
                         session_cookie, login_err = await _login_mam(hass, base_url, username, password)
                         if login_err:
+                            _LOGGER.warning("MAM Manager: donate — login failed: %s", login_err)
                             donate_actions.append(f"skipped (login failed: {login_err})")
                         elif session_cookie and _is_valid_session_cookie(session_cookie):
+                            _LOGGER.warning(
+                                "MAM Manager: donate — login successful (session received, length=%s)",
+                                len((session_cookie or "").strip()),
+                            )
                             _update_entry_cookie_if_valid(hass, entry, CONF_MAM_ID, session_cookie)
                             donate_form = {
                                 "Donation": str(DEFAULT_DONATE_POINTS),
@@ -305,8 +314,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 donate_actions.append("done")
                             else:
                                 donate_actions.append("request_failed")
-                        elif session_cookie and not _is_valid_session_cookie(session_cookie):
-                            donate_actions.append("skipped (login returned invalid session)")
+                    elif session_cookie and not _is_valid_session_cookie(session_cookie):
+                        _LOGGER.warning(
+                            "MAM Manager: donate — login returned invalid session (empty or deleted)"
+                        )
+                        donate_actions.append("skipped (login cookie invalid; check username/password)")
             else:
                 donate_actions.append("off")
             _LOGGER.warning("MAM Manager: donate — %s", ", ".join(donate_actions))

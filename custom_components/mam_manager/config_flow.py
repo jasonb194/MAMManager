@@ -150,8 +150,10 @@ async def _login_mam(
                     part = resp.headers.get("Set-Cookie", "").split(";")[0].strip()
                     if "=" in part:
                         session_cookie = part.split("=", 1)[1].strip()
-                # Login failure often returns 200 with login page again or redirect to login
-                if not session_cookie:
+                # Login failure: no cookie, or server sent mam_id=deleted / empty to clear session
+                if not session_cookie or not session_cookie.strip():
+                    return None, "invalid_auth"
+                if session_cookie.strip().lower() == "deleted":
                     return None, "invalid_auth"
                 return session_cookie, None
     except aiohttp.ClientError:
