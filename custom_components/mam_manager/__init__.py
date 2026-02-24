@@ -7,6 +7,7 @@ import time
 from datetime import date
 
 import aiohttp
+import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_utc_time_change
@@ -205,7 +206,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         update_interval=SCAN_INTERVAL,
         update_method=_update_user_and_storage,
     )
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception as e:
+        _LOGGER.warning(
+            "MAM Manager: initial data refresh failed (%s); daily run will still be scheduled",
+            e,
+        )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator, "store": store}
 
     async def _run_daily_actions(*_args, **_kwargs) -> None:
@@ -397,8 +404,50 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass, _run_daily_actions, hour=2, minute=0, second=0
     )
     entry.async_on_unload(remove_daily)
+    _LOGGER.info("MAM Manager: daily run scheduled at 02:00 UTC")
     # Run once on load in case we're past midnight and haven't run yet
     hass.async_create_task(_run_daily_actions())
+
+    # Register reset_last_run_dates service once (so "Already donated" etc. can be corrected)
+    if not hass.services.has_service(DOMAIN, "reset_last_run_dates"):
+
+        async def _reset_last_run_dates(call) -> None:
+            reset_donate = call.data.get("reset_donate", True)
+            reset_vip = call.data.get("reset_vip", False)
+            reset_credit = call.data.get("reset_credit", False)
+            for _entry_id, domain_data in list((hass.data.get(DOMAIN) or {}).items()):
+                store = domain_data.get("store")
+                coordinator = domain_data.get("coordinator")
+                if not store or not coordinator:
+                    continue
+                saved = await store.async_load() or {}
+                if reset_donate:
+                    saved.pop(STORAGE_LAST_DONATE_DATE, None)
+                if reset_vip:
+                    saved.pop(STORAGE_LAST_BUY_VIP_DATE, None)
+                if reset_credit:
+                    saved.pop(STORAGE_LAST_BUY_CREDIT_DATE, None)
+                await store.async_save(saved)
+                await coordinator.async_request_refresh()
+            _LOGGER.info(
+                "MAM Manager: reset last run dates — donate=%s, vip=%s, credit=%s",
+                reset_donate,
+                reset_vip,
+                reset_credit,
+            )
+
+        hass.services.async_register(
+            DOMAIN,
+            "reset_last_run_dates",
+            _reset_last_run_dates,
+            schema=vol.Schema(
+                {
+                    vol.Optional("reset_donate", default=True): vol.Coerce(bool),
+                    vol.Optional("reset_vip", default=False): vol.Coerce(bool),
+                    vol.Optional("reset_credit", default=False): vol.Coerce(bool),
+                }
+            ),
+        )
 
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "switch"])
 

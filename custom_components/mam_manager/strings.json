@@ -1,4 +1,24 @@
 {
+  "services": {
+    "reset_last_run_dates": {
+      "name": "Reset last run dates",
+      "description": "Clear stored last-run dates so the next daily run will try donate/VIP/credit again. Use when \"Already donated\" is wrong.",
+      "fields": {
+        "reset_donate": {
+          "name": "Reset donate",
+          "description": "Clear last donate date."
+        },
+        "reset_vip": {
+          "name": "Reset VIP",
+          "description": "Clear last buy VIP date."
+        },
+        "reset_credit": {
+          "name": "Reset credit",
+          "description": "Clear last buy credit date."
+        }
+      }
+    }
+  },
   "config": {
     "step": {
       "user": {
