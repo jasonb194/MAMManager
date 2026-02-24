@@ -61,6 +61,19 @@ def _is_valid_session_cookie(value: str | None) -> bool:
     return value.strip().lower() != "deleted"
 
 
+def _update_entry_cookie_if_valid(
+    hass: HomeAssistant, entry: ConfigEntry, key: str, new_value: str | None
+) -> bool:
+    """Update config entry with cookie value only when it is from Set-Cookie and not blank. Preserves existing value otherwise. Returns True if updated."""
+    if not _is_valid_session_cookie(new_value):
+        return False
+    val = (new_value or "").strip()
+    if not val:
+        return False
+    hass.config_entries.async_update_entry(entry, data={**entry.data, key: val})
+    return True
+
+
 def _get_cookie_value_from_response(resp: aiohttp.ClientResponse, cookie_name: str) -> str | None:
     """Parse Set-Cookie headers and return the value for cookie_name, or None. Ignores other cookies (e.g. lid)."""
     cookie_name = cookie_name.strip().lower()
@@ -189,9 +202,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         saved = await _load_storage()
         user_data, new_cookie = await _fetch_user_data(hass, base_url, user_id, mam_id, store)
-        # Only update stored mam_id when we got valid user data and a real new cookie (server may send Set-Cookie: mam_id=deleted or empty to clear session after reboot/expiry - do not overwrite)
-        if user_data and _is_valid_session_cookie(new_cookie) and (new_cookie or "").strip() != mam_id:
-            hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_MAM_ID: (new_cookie or "").strip()})
+        # Only update mam_id when we got valid user data and a real new cookie from Set-Cookie (never overwrite with blank/deleted)
+        if user_data and (new_cookie or "").strip() != mam_id:
+            _update_entry_cookie_if_valid(hass, entry, CONF_MAM_ID, new_cookie)
 
         last_donate = saved.get(STORAGE_LAST_DONATE_DATE)
         last_buy = saved.get(STORAGE_LAST_BUY_CREDIT_DATE)
@@ -262,9 +275,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     if login_err:
                         donate_actions.append(f"skipped (login failed: {login_err})")
                     elif session_cookie and _is_valid_session_cookie(session_cookie):
-                        hass.config_entries.async_update_entry(
-                            entry, data={**entry.data, CONF_MAM_ID: session_cookie}
-                        )
+                        _update_entry_cookie_if_valid(hass, entry, CONF_MAM_ID, session_cookie)
                         donate_form = {
                             "Donation": str(DEFAULT_DONATE_POINTS),
                             "time": f"{time.time():.4f}",
@@ -286,10 +297,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             cookie_name=DONATE_COOKIE_NAME,
                             extra_headers=donate_headers,
                         )
-                        if new_cookie and _is_valid_session_cookie(new_cookie):
-                            hass.config_entries.async_update_entry(
-                                entry, data={**entry.data, CONF_MBSC: new_cookie}
-                            )
+                        _update_entry_cookie_if_valid(hass, entry, CONF_MBSC, new_cookie)
                         if ok:
                             saved[STORAGE_LAST_DONATE_DATE] = today
                             updated = True
@@ -323,8 +331,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 ok, new_cookie = await _mam_request(
                     hass, base_url, DEFAULT_BUY_VIP_PATH, mam_id
                 )
-                if _is_valid_session_cookie(new_cookie) and (new_cookie or "").strip() != mam_id:
-                    hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_MAM_ID: (new_cookie or "").strip()})
+                if (new_cookie or "").strip() != mam_id:
+                    _update_entry_cookie_if_valid(hass, entry, CONF_MAM_ID, new_cookie)
                 if ok:
                     saved[STORAGE_LAST_BUY_VIP_DATE] = today
                     updated = True
@@ -352,8 +360,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 ok, new_cookie = await _mam_request(
                     hass, base_url, DEFAULT_BUY_CREDIT_PATH, mam_id
                 )
-                if _is_valid_session_cookie(new_cookie) and (new_cookie or "").strip() != mam_id:
-                    hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_MAM_ID: (new_cookie or "").strip()})
+                if (new_cookie or "").strip() != mam_id:
+                    _update_entry_cookie_if_valid(hass, entry, CONF_MAM_ID, new_cookie)
                 if ok:
                     saved[STORAGE_LAST_BUY_CREDIT_DATE] = today
                     updated = True
