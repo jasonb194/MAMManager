@@ -314,11 +314,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 donate_actions.append("done")
                             else:
                                 donate_actions.append("request_failed")
-                    elif session_cookie and not _is_valid_session_cookie(session_cookie):
-                        _LOGGER.warning(
-                            "MAM Manager: donate — login returned invalid session (empty or deleted)"
-                        )
-                        donate_actions.append("skipped (login cookie invalid; check username/password)")
+                        elif session_cookie and not _is_valid_session_cookie(session_cookie):
+                            _LOGGER.warning(
+                                "MAM Manager: donate — login returned invalid session (empty or deleted)"
+                            )
+                            donate_actions.append("skipped (login cookie invalid; check username/password)")
             else:
                 donate_actions.append("off")
             _LOGGER.warning("MAM Manager: donate — %s", ", ".join(donate_actions))
