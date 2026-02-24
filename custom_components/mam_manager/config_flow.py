@@ -35,7 +35,7 @@ from .const import (
     USER_DATA_PATH,
 )
 
-_LOGGER = logging.getLogger(__name__)
+_LOGGER = logging.getLogger("custom_components.mam_manager")
 
 
 def _normalize_base_url(url: str) -> str:
@@ -104,9 +104,13 @@ def _parse_login_form(html: str) -> dict[str, str] | None:
 
 
 async def _login_mam(
-    hass: HomeAssistant, base_url: str, username: str, password: str
+    hass: HomeAssistant,
+    base_url: str,
+    username: str,
+    password: str,
+    response_debug: list | None = None,
 ) -> tuple[str | None, str | None]:
-    """Log in to MAM via login.php + takelogin.php. Returns (session_cookie_value, error_key)."""
+    """Log in to MAM via login.php + takelogin.php. Returns (session_cookie_value, error_key). If response_debug is a list, append response info dict on POST (for logging in caller)."""
     base_url = _normalize_base_url(base_url)
     login_url = base_url + LOGIN_PATH
     takelogin_url = base_url + TAKELOGIN_PATH
@@ -146,6 +150,14 @@ async def _login_mam(
                     part = (header.split(";")[0] or "").strip()
                     if "=" in part:
                         set_cookie_names.append(part.split("=", 1)[0].strip())
+                if response_debug is not None:
+                    response_debug.append({
+                        "status": resp.status,
+                        "location": (location[:80] if location else ""),
+                        "set_cookie_names": set_cookie_names,
+                        "body_len": len(body),
+                        "body_preview": (body[:400].replace("\n", " ").strip() if body else ""),
+                    })
                 _LOGGER.warning(
                     "MAM Manager: login response status=%s location=%s set_cookie_names=%s body_len=%s body_preview=%s",
                     resp.status,
@@ -154,20 +166,22 @@ async def _login_mam(
                     len(body),
                     body[:400].replace("\n", " ").strip() if body else "",
                 )
-                # Session cookie is usually mam_id or mbsc in Set-Cookie
+                # Login response gives mbsc (not mam_id); use only mbsc from Set-Cookie for post-login session
                 session_cookie = None
                 for header in resp.headers.getall("Set-Cookie", []):
                     part = header.split(";")[0].strip()
                     if "=" in part:
                         name, value = part.split("=", 1)
                         name = name.strip().lower()
-                        if name in ("mam_id", "mbsc"):
+                        if name == "mbsc":
                             session_cookie = value.strip()
                             break
                 if not session_cookie and resp.headers.get("Set-Cookie"):
                     part = resp.headers.get("Set-Cookie", "").split(";")[0].strip()
                     if "=" in part:
-                        session_cookie = part.split("=", 1)[1].strip()
+                        cname, cval = part.split("=", 1)
+                        if cname.strip().lower() == "mbsc":
+                            session_cookie = cval.strip()
                 # Login failure: no cookie, or server sent mam_id=deleted / empty to clear session
                 if not session_cookie or not session_cookie.strip():
                     return None, "invalid_auth"

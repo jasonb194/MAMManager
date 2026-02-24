@@ -285,19 +285,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 username if username else "?",
                                 len(password),
                             )
-                            session_cookie, login_err = await _login_mam(hass, base_url, username, password)
+                            response_debug = []
+                            session_cookie, login_err = await _login_mam(
+                                hass, base_url, username, password, response_debug=response_debug
+                            )
                             if login_err:
-                                _LOGGER.warning(
-                                    "MAM Manager: donate — login failed: %s (use same email as MAM website; re-enter password in MAM Manager options and Save)",
-                                    login_err,
-                                )
+                                if response_debug:
+                                    r = response_debug[0]
+                                    _LOGGER.warning(
+                                        "MAM Manager: donate — login failed: %s — response status=%s location=%s set_cookie_names=%s body_len=%s body_preview=%s",
+                                        login_err,
+                                        r.get("status"),
+                                        r.get("location"),
+                                        r.get("set_cookie_names"),
+                                        r.get("body_len"),
+                                        (r.get("body_preview") or "")[:200],
+                                    )
+                                else:
+                                    _LOGGER.warning(
+                                        "MAM Manager: donate — login failed: %s (use same email as MAM website; re-enter password in MAM Manager options and Save)",
+                                        login_err,
+                                    )
                                 donate_actions.append(f"skipped (login failed: {login_err})")
                             elif session_cookie and _is_valid_session_cookie(session_cookie):
                                 _LOGGER.warning(
-                                    "MAM Manager: donate — login successful (session received, length=%s)",
+                                    "MAM Manager: donate — login successful (mbsc received, length=%s)",
                                     len((session_cookie or "").strip()),
                                 )
-                                _update_entry_cookie_if_valid(hass, entry, CONF_MAM_ID, session_cookie)
+                                _update_entry_cookie_if_valid(hass, entry, CONF_MBSC, session_cookie)
                                 donate_form = {
                                     "Donation": str(DEFAULT_DONATE_POINTS),
                                     "time": f"{time.time():.4f}",
