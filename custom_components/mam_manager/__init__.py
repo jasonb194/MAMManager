@@ -168,6 +168,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up MAM Manager from a config entry."""
+    _LOGGER.warning("MAM Manager: setup started")
     store = Store(hass, STORAGE_VERSION, f"{DOMAIN}_{entry.entry_id}_{STORAGE_KEY}")
 
     async def _load_storage() -> dict:
@@ -404,7 +405,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass, _run_daily_actions, hour=2, minute=0, second=0
     )
     entry.async_on_unload(remove_daily)
-    _LOGGER.info("MAM Manager: daily run scheduled at 02:00 UTC")
+    _LOGGER.warning("MAM Manager: daily run scheduled at 02:00 UTC")
     # Run once on load in case we're past midnight and haven't run yet
     hass.async_create_task(_run_daily_actions())
 
