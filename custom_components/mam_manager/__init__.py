@@ -272,54 +272,66 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     else:
                         username = (data.get(CONF_USERNAME) or "").strip()
                         password = data.get(CONF_PASSWORD) or ""
-                        _LOGGER.warning(
-                            "MAM Manager: donate — attempting login for %s",
-                            (username[:3] + "…") if username else "?",
-                        )
-                        session_cookie, login_err = await _login_mam(hass, base_url, username, password)
-                        if login_err:
-                            _LOGGER.warning("MAM Manager: donate — login failed: %s", login_err)
-                            donate_actions.append(f"skipped (login failed: {login_err})")
-                        elif session_cookie and _is_valid_session_cookie(session_cookie):
+                        if not username:
+                            donate_actions.append("skipped (email/username not set)")
+                        elif not password or (password.strip() in ("********", "••••••••") or len(password.strip()) < 4):
                             _LOGGER.warning(
-                                "MAM Manager: donate — login successful (session received, length=%s)",
-                                len((session_cookie or "").strip()),
+                                "MAM Manager: donate — email set but password missing or placeholder; re-enter password in MAM Manager options and Save"
                             )
-                            _update_entry_cookie_if_valid(hass, entry, CONF_MAM_ID, session_cookie)
-                            donate_form = {
-                                "Donation": str(DEFAULT_DONATE_POINTS),
-                                "time": f"{time.time():.4f}",
-                                "submit": "Donate Points",
-                            }
-                            donate_url = base_url.rstrip("/") + DEFAULT_DONATE_VAULT_PATH
-                            donate_headers = {
-                                **MAM_DONATE_HEADERS,
-                                "Origin": base_url.rstrip("/"),
-                                "Referer": donate_url + "?",
-                            }
-                            ok, new_cookie = await _mam_request(
-                                hass,
-                                base_url,
-                                DEFAULT_DONATE_VAULT_PATH,
-                                session_cookie,
-                                method="post",
-                                form_data=donate_form,
-                                cookie_name=DONATE_COOKIE_NAME,
-                                extra_headers=donate_headers,
-                            )
-                            _update_entry_cookie_if_valid(hass, entry, CONF_MBSC, new_cookie)
-                            if ok:
-                                saved[STORAGE_LAST_DONATE_DATE] = today
-                                updated = True
-                                donate_actions.append("done")
-                            else:
-                                donate_actions.append("request_failed")
+                            donate_actions.append("skipped (password not set; re-enter in options)")
                         else:
-                            if session_cookie and not _is_valid_session_cookie(session_cookie):
+                            _LOGGER.warning(
+                                "MAM Manager: donate — attempting login for %s (password length=%s)",
+                                username if username else "?",
+                                len(password),
+                            )
+                            session_cookie, login_err = await _login_mam(hass, base_url, username, password)
+                            if login_err:
                                 _LOGGER.warning(
-                                    "MAM Manager: donate — login returned invalid session (empty or deleted)"
+                                    "MAM Manager: donate — login failed: %s (use same email as MAM website; re-enter password in MAM Manager options and Save)",
+                                    login_err,
                                 )
-                                donate_actions.append("skipped (login cookie invalid; check username/password)")
+                                donate_actions.append(f"skipped (login failed: {login_err})")
+                            elif session_cookie and _is_valid_session_cookie(session_cookie):
+                                _LOGGER.warning(
+                                    "MAM Manager: donate — login successful (session received, length=%s)",
+                                    len((session_cookie or "").strip()),
+                                )
+                                _update_entry_cookie_if_valid(hass, entry, CONF_MAM_ID, session_cookie)
+                                donate_form = {
+                                    "Donation": str(DEFAULT_DONATE_POINTS),
+                                    "time": f"{time.time():.4f}",
+                                    "submit": "Donate Points",
+                                }
+                                donate_url = base_url.rstrip("/") + DEFAULT_DONATE_VAULT_PATH
+                                donate_headers = {
+                                    **MAM_DONATE_HEADERS,
+                                    "Origin": base_url.rstrip("/"),
+                                    "Referer": donate_url + "?",
+                                }
+                                ok, new_cookie = await _mam_request(
+                                    hass,
+                                    base_url,
+                                    DEFAULT_DONATE_VAULT_PATH,
+                                    session_cookie,
+                                    method="post",
+                                    form_data=donate_form,
+                                    cookie_name=DONATE_COOKIE_NAME,
+                                    extra_headers=donate_headers,
+                                )
+                                _update_entry_cookie_if_valid(hass, entry, CONF_MBSC, new_cookie)
+                                if ok:
+                                    saved[STORAGE_LAST_DONATE_DATE] = today
+                                    updated = True
+                                    donate_actions.append("done")
+                                else:
+                                    donate_actions.append("request_failed")
+                            else:
+                                if session_cookie and not _is_valid_session_cookie(session_cookie):
+                                    _LOGGER.warning(
+                                        "MAM Manager: donate — login returned invalid session (empty or deleted)"
+                                    )
+                                    donate_actions.append("skipped (login cookie invalid; check username/password)")
             else:
                 donate_actions.append("off")
             _LOGGER.warning("MAM Manager: donate — %s", ", ".join(donate_actions))
