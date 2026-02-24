@@ -218,7 +218,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def _run_daily_actions(*_args, **_kwargs) -> None:
         """Run once per day: donate (fresh login + mbsc), then buy VIP/credit (mam_id only)."""
-        _LOGGER.info("MAM Manager: daily run started")
+        _LOGGER.warning("MAM Manager: daily run started")
         options = entry.options or entry.data or {}
         data = entry.data or {}
         base_url = (data.get(CONF_BASE_URL) or DEFAULT_BASE_URL).strip()
@@ -230,16 +230,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         today = _today_iso()
         saved = await store.async_load() or {}
         updated = False
-        donate_status = "skipped_off"
-        vip_status = "skipped_off"
-        credit_status = "skipped_off"
+        donate_actions: list[str] = []
+        vip_actions: list[str] = []
+        credit_actions: list[str] = []
 
         # 1) Donate: only via username/password; fresh login every day, use mbsc only; update mbsc from response
         if options.get(CONF_AUTO_DONATE_VAULT) and DEFAULT_DONATE_VAULT_PATH:
             if not has_creds:
-                donate_status = "skipped_no_creds"
-                _LOGGER.info("MAM Manager: donate skipped (username/password required for donate)")
-            elif saved.get(STORAGE_LAST_DONATE_DATE) != today:
+                donate_actions.append("skipped (username/password required)")
+            elif saved.get(STORAGE_LAST_DONATE_DATE) == today:
+                donate_actions.append("already_done")
+            else:
                 user_data = (coordinator.data or {}).get("user_data") or {}
                 ratio_val = user_data.get("ratio")
                 if isinstance(ratio_val, str):
@@ -248,19 +249,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     except (ValueError, TypeError):
                         ratio_val = 0.0
                 ratio_val = float(ratio_val) if ratio_val is not None else 0.0
-                if ratio_val >= MIN_RATIO_FOR_DONATE:
+                if ratio_val < MIN_RATIO_FOR_DONATE:
+                    donate_actions.append(f"skipped (ratio {ratio_val} < {MIN_RATIO_FOR_DONATE})")
+                else:
                     username = (data.get(CONF_USERNAME) or "").strip()
                     password = data.get(CONF_PASSWORD) or ""
                     session_cookie, login_err = await _login_mam(hass, base_url, username, password)
                     if login_err:
-                        donate_status = "skipped_login_failed"
-                        _LOGGER.warning("MAM Manager: donate skipped (login failed: %s)", login_err)
+                        donate_actions.append(f"skipped (login failed: {login_err})")
                     elif session_cookie:
-                        # Update mam_id from login so API/VIP/credit use fresh session
                         hass.config_entries.async_update_entry(
                             entry, data={**entry.data, CONF_MAM_ID: session_cookie}
                         )
-                        # Donate with mbsc only (fresh from login); mbsc changes on every page call
                         donate_form = {
                             "Donation": str(DEFAULT_DONATE_POINTS),
                             "time": f"{time.time():.4f}",
@@ -282,7 +282,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             cookie_name=DONATE_COOKIE_NAME,
                             extra_headers=donate_headers,
                         )
-                        # Update local mbsc when donate response sends Set-Cookie
                         if new_cookie:
                             hass.config_entries.async_update_entry(
                                 entry, data={**entry.data, CONF_MBSC: new_cookie}
@@ -290,26 +289,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         if ok:
                             saved[STORAGE_LAST_DONATE_DATE] = today
                             updated = True
-                            donate_status = "done"
-                            _LOGGER.info("MAM Manager: donate to vault completed for today")
+                            donate_actions.append("done")
                         else:
-                            donate_status = "skipped_request_failed"
-                            _LOGGER.warning("MAM Manager: donate request failed (check site/connection)")
-                else:
-                    donate_status = "skipped_ratio"
-                    _LOGGER.info(
-                        "MAM Manager: donate skipped (ratio %s < %s)",
-                        ratio_val,
-                        MIN_RATIO_FOR_DONATE,
-                    )
-            else:
-                donate_status = "already_done"
-                _LOGGER.info("MAM Manager: donate already done today, skipping")
+                            donate_actions.append("request_failed")
+        else:
+            donate_actions.append("off")
+        _LOGGER.warning("MAM Manager: donate — %s", ", ".join(donate_actions))
         await coordinator.async_request_refresh()
         mam_id = (entry.data or {}).get(CONF_MAM_ID) or mam_id
 
         # 2) VIP and 3) Credit: always use mam_id only (never mbsc)
-
         if options.get(CONF_AUTO_BUY_VIP) and DEFAULT_BUY_VIP_PATH:
             user_data = (coordinator.data or {}).get("user_data") or {}
             classname = ((user_data.get("classname") or "").strip()).lower()
@@ -320,38 +309,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 except (ValueError, TypeError):
                     seedbonus = 0
             seedbonus = int(seedbonus) if seedbonus is not None else 0
-            if classname in ALLOWED_CLASSNAMES_FOR_AUTO_VIP:
-                if seedbonus >= MIN_SEEDBONUS_FOR_VIP:
-                    if saved.get(STORAGE_LAST_BUY_VIP_DATE) != today:
-                        ok, new_cookie = await _mam_request(
-                            hass, base_url, DEFAULT_BUY_VIP_PATH, mam_id
-                        )
-                        if _is_valid_session_cookie(new_cookie) and (new_cookie or "").strip() != mam_id:
-                            hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_MAM_ID: (new_cookie or "").strip()})
-                        if ok:
-                            saved[STORAGE_LAST_BUY_VIP_DATE] = today
-                            updated = True
-                            vip_status = "done"
-                            _LOGGER.info("MAM Manager: buy VIP completed for today")
-                        else:
-                            vip_status = "skipped_request_failed"
-                            _LOGGER.warning("MAM Manager: buy VIP request failed")
-                    else:
-                        vip_status = "already_done"
-                        _LOGGER.info("MAM Manager: VIP already bought today, skipping")
-                else:
-                    vip_status = "skipped_seedbonus"
-                    _LOGGER.info(
-                        "MAM Manager: VIP skipped (seedbonus %s < %s)",
-                        seedbonus,
-                        MIN_SEEDBONUS_FOR_VIP,
-                    )
+            if classname not in ALLOWED_CLASSNAMES_FOR_AUTO_VIP:
+                vip_actions.append(f"skipped (class '{user_data.get('classname') or '?'}' not eligible)")
+            elif seedbonus < MIN_SEEDBONUS_FOR_VIP:
+                vip_actions.append(f"skipped (seedbonus {seedbonus} < {MIN_SEEDBONUS_FOR_VIP})")
+            elif saved.get(STORAGE_LAST_BUY_VIP_DATE) == today:
+                vip_actions.append("already_done")
             else:
-                vip_status = "skipped_class"
-                _LOGGER.info(
-                    "MAM Manager: VIP skipped (class '%s' not eligible)",
-                    user_data.get("classname") or "?",
+                ok, new_cookie = await _mam_request(
+                    hass, base_url, DEFAULT_BUY_VIP_PATH, mam_id
                 )
+                if _is_valid_session_cookie(new_cookie) and (new_cookie or "").strip() != mam_id:
+                    hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_MAM_ID: (new_cookie or "").strip()})
+                if ok:
+                    saved[STORAGE_LAST_BUY_VIP_DATE] = today
+                    updated = True
+                    vip_actions.append("done")
+                else:
+                    vip_actions.append("request_failed")
+        else:
+            vip_actions.append("off")
+        _LOGGER.warning("MAM Manager: VIP — %s", ", ".join(vip_actions))
         await coordinator.async_request_refresh()
         mam_id = (entry.data or {}).get(CONF_MAM_ID) or mam_id
 
@@ -364,37 +342,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 except (ValueError, TypeError):
                     seedbonus = 0
             seedbonus = int(seedbonus) if seedbonus is not None else 0
-            if seedbonus >= MIN_SEEDBONUS_FOR_CREDIT:
-                if saved.get(STORAGE_LAST_BUY_CREDIT_DATE) != today:
-                    ok, new_cookie = await _mam_request(
-                        hass, base_url, DEFAULT_BUY_CREDIT_PATH, mam_id
-                    )
-                    if _is_valid_session_cookie(new_cookie) and (new_cookie or "").strip() != mam_id:
-                        hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_MAM_ID: (new_cookie or "").strip()})
-                    if ok:
-                        saved[STORAGE_LAST_BUY_CREDIT_DATE] = today
-                        updated = True
-                        credit_status = "done"
-                        _LOGGER.info("MAM Manager: buy credit completed for today")
-                    else:
-                        credit_status = "skipped_request_failed"
-                        _LOGGER.warning("MAM Manager: buy credit request failed")
-                else:
-                    credit_status = "already_done"
-                    _LOGGER.info("MAM Manager: credit already bought today, skipping")
+            if seedbonus < MIN_SEEDBONUS_FOR_CREDIT:
+                credit_actions.append(f"skipped (seedbonus {seedbonus} < {MIN_SEEDBONUS_FOR_CREDIT})")
+            elif saved.get(STORAGE_LAST_BUY_CREDIT_DATE) == today:
+                credit_actions.append("already_done")
             else:
-                credit_status = "skipped_seedbonus"
-                _LOGGER.info(
-                    "MAM Manager: credit skipped (seedbonus %s < %s)",
-                    seedbonus,
-                    MIN_SEEDBONUS_FOR_CREDIT,
+                ok, new_cookie = await _mam_request(
+                    hass, base_url, DEFAULT_BUY_CREDIT_PATH, mam_id
                 )
+                if _is_valid_session_cookie(new_cookie) and (new_cookie or "").strip() != mam_id:
+                    hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_MAM_ID: (new_cookie or "").strip()})
+                if ok:
+                    saved[STORAGE_LAST_BUY_CREDIT_DATE] = today
+                    updated = True
+                    credit_actions.append("done")
+                else:
+                    credit_actions.append("request_failed")
+        else:
+            credit_actions.append("off")
+        _LOGGER.warning("MAM Manager: credit — %s", ", ".join(credit_actions))
 
-        _LOGGER.info(
+        _LOGGER.warning(
             "MAM Manager: daily run finished — donate: %s, VIP: %s, credit: %s",
-            donate_status,
-            vip_status,
-            credit_status,
+            ", ".join(donate_actions),
+            ", ".join(vip_actions),
+            ", ".join(credit_actions),
         )
         if updated:
             await store.async_save(saved)
@@ -411,7 +383,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def _on_config_saved(_hass: HomeAssistant, _entry: ConfigEntry) -> None:
         """Run daily actions when user saves MAM Manager config (options or reconfig)."""
-        _LOGGER.info("MAM Manager: config saved, running daily actions")
+        _LOGGER.warning("MAM Manager: config saved, running daily actions")
         hass.async_create_task(_run_daily_actions())
 
     entry.add_update_listener(_on_config_saved)
