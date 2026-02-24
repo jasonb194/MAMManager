@@ -238,8 +238,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if options.get(CONF_AUTO_DONATE_VAULT) and DEFAULT_DONATE_VAULT_PATH:
             if not has_creds:
                 donate_actions.append("skipped (username/password required)")
-            elif saved.get(STORAGE_LAST_DONATE_DATE) == today:
-                donate_actions.append("already_done")
             else:
                 user_data = (coordinator.data or {}).get("user_data") or {}
                 ratio_val = user_data.get("ratio")
@@ -313,8 +311,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 vip_actions.append(f"skipped (class '{user_data.get('classname') or '?'}' not eligible)")
             elif seedbonus < MIN_SEEDBONUS_FOR_VIP:
                 vip_actions.append(f"skipped (seedbonus {seedbonus} < {MIN_SEEDBONUS_FOR_VIP})")
-            elif saved.get(STORAGE_LAST_BUY_VIP_DATE) == today:
-                vip_actions.append("already_done")
             else:
                 ok, new_cookie = await _mam_request(
                     hass, base_url, DEFAULT_BUY_VIP_PATH, mam_id
@@ -344,8 +340,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             seedbonus = int(seedbonus) if seedbonus is not None else 0
             if seedbonus < MIN_SEEDBONUS_FOR_CREDIT:
                 credit_actions.append(f"skipped (seedbonus {seedbonus} < {MIN_SEEDBONUS_FOR_CREDIT})")
-            elif saved.get(STORAGE_LAST_BUY_CREDIT_DATE) == today:
-                credit_actions.append("already_done")
             else:
                 ok, new_cookie = await _mam_request(
                     hass, base_url, DEFAULT_BUY_CREDIT_PATH, mam_id
