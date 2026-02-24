@@ -409,6 +409,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Run once on load in case we're past midnight and haven't run yet
     hass.async_create_task(_run_daily_actions())
 
+    async def _on_config_saved(_hass: HomeAssistant, _entry: ConfigEntry) -> None:
+        """Run daily actions when user saves MAM Manager config (options or reconfig)."""
+        _LOGGER.info("MAM Manager: config saved, running daily actions")
+        hass.async_create_task(_run_daily_actions())
+
+    entry.add_update_listener(_on_config_saved)
+
     # Register reset_last_run_dates service once (so "Already donated" etc. can be corrected)
     if not hass.services.has_service(DOMAIN, "reset_last_run_dates"):
 
